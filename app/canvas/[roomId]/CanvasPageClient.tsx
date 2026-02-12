@@ -6,12 +6,11 @@ import Canvas, { CanvasHandle } from "@/components/Canvas";
 import Toolbar from "@/components/Toolbar";
 import Toast, { ToastType } from "@/components/ui/Toast";
 import PeerLeftModal from "@/components/PeerLeftModal";
-import { useFirebaseSync } from "@/hooks/useFirebaseSync";
-import { usePresence } from "@/hooks/usePresence";
+import { useSupabaseSync } from "@/hooks/useSupabaseSync";
+import { useSupabasePresence } from "@/hooks/useSupabasePresence";
 import { Tool, Stroke } from "@/lib/types";
-import { set, ref } from "firebase/database";
-import { database } from "@/lib/firebase";
 import { debounce } from "@/lib/canvas-utils";
+import { supabase } from "@/lib/supabase";
 
 interface CanvasPageClientProps {
   roomId: string;
@@ -27,7 +26,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     redo,
     canUndo,
     canRedo,
-  } = useFirebaseSync(roomId);
+  } = useSupabaseSync(roomId);
   const [tool, setTool] = useState<Tool>("pen");
   const [color, setColor] = useState("#000000");
   const [size, setSize] = useState(5);
@@ -52,12 +51,8 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
   const userId = useRef(
     `user-${Math.random().toString(36).substr(2, 9)}`,
   ).current;
-  const { others, updateCursor, setMyName, updateCurrentStroke } = usePresence(
-    roomId,
-    userId,
-    identityColor,
-    userName,
-  );
+  const { others, updateCursor, setMyName, updateCurrentStroke } =
+    useSupabasePresence(roomId, userId, identityColor, userName);
   const [showPeerLeftModal, setShowPeerLeftModal] = useState(false);
   const prevOthersCountRef = useRef(others.length);
 
@@ -134,21 +129,25 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     addStroke(stroke);
   };
 
-  const handleClear = () => {
+  const handleClear = async () => {
     // Clear local canvas
     if (canvasRef.current) {
       canvasRef.current.clearCanvas();
       // Background resets automatically because strokes are cleared
     }
-    // Clear Firebase
-    const strokesRef = ref(database, `rooms/${roomId}/strokes`);
-    set(strokesRef, null)
-      .then(() => {
-        triggerToast("Kanvas dan latar belakang berhasil direset!", "info");
-      })
-      .catch(() => {
-        triggerToast("Gagal menghapus kanvas.", "error");
-      });
+    // Clear Supabase
+    try {
+      const { error } = await supabase
+        .from("strokes")
+        .delete()
+        .eq("room_id", roomId);
+
+      if (error) throw error;
+      triggerToast("Kanvas dan latar belakang berhasil direset!", "info");
+    } catch (error) {
+      console.error("Error clearing canvas:", error);
+      triggerToast("Gagal menghapus kanvas.", "error");
+    }
   };
 
   const handleSave = () => {
