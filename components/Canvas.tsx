@@ -78,8 +78,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
     const [isDraggingStroke, setIsDraggingStroke] = useState(false);
     const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
-    // Throttled drag update ref to prevent excessive re-renders
+    // Throttled drag update refs to prevent excessive re-renders and Firebase spam
     // IMPORTANT: Pass strokeId as parameter to avoid stale closure
+
+    // Local state update: 16ms throttle for smooth 60fps visual feedback
     const throttledDragUpdateRef = useRef(
       throttle((strokeId: string, newPoints: Point[]) => {
         setStrokes((prev) =>
@@ -91,6 +93,15 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
           }),
         );
       }, 16), // ~60fps max
+    );
+
+    // Firebase sync: 100ms throttle for real-time collaboration without spam
+    const throttledFirebaseSyncRef = useRef(
+      throttle((strokeId: string, newPoints: Point[]) => {
+        if (onStrokeUpdate) {
+          onStrokeUpdate(strokeId, { points: newPoints });
+        }
+      }, 100), // 10 updates/sec max
     );
 
     useEffect(() => {
@@ -451,8 +462,11 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
 
         const newPoints = s.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
 
-        // Throttled update to prevent excessive re-renders during drag
+        // Update local state for smooth visual feedback (60fps)
         throttledDragUpdateRef.current(selectedStrokeId, newPoints);
+
+        // Sync to Firebase for real-time collaboration (10fps)
+        throttledFirebaseSyncRef.current(selectedStrokeId, newPoints);
 
         return;
       }
@@ -485,10 +499,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
 
       if (tool === "select" && isDraggingStroke && selectedStrokeId) {
         setIsDraggingStroke(false);
-        const s = strokes.find((st) => st.id === selectedStrokeId);
-        if (s && onStrokeUpdate) {
-          onStrokeUpdate(s.id, { points: s.points });
-        }
+        // Firebase sync is already handled by throttledFirebaseSyncRef during drag
+        // No need to sync again here
         return;
       }
 
