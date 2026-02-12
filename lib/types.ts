@@ -23,3 +23,11 @@ export interface DrawOptions {
   color: string;
   size: number;
 }
+export interface UserPresence {
+  id: string;
+  name: string;
+  color: string;
+  cursor: Point | null;
+  lastActive: number;
+  currentStroke: Stroke | null;
+}

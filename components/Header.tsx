@@ -1,6 +1,6 @@
 "use client";
 
-import { Undo2, Redo2, UserPlus, Link, Copy, Check, X } from "lucide-react";
+import { Undo2, Redo2, User, Link, Copy, Check, X, Pencil } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 
 interface HeaderProps {
@@ -9,6 +9,8 @@ interface HeaderProps {
   canUndo?: boolean;
   canRedo?: boolean;
   roomId?: string;
+  userName?: string;
+  onUserNameChange?: (name: string) => void;
 }
 
 export default function Header({
@@ -17,6 +19,8 @@ export default function Header({
   canUndo = false,
   canRedo = false,
   roomId,
+  userName = "Artist",
+  onUserNameChange,
 }: HeaderProps) {
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -86,74 +90,86 @@ export default function Header({
           </button>
         </div>
 
-        {/* Invite Button & Popover */}
+        {/* Profile / Invite Menu */}
         <div className="relative" ref={inviteRef}>
           <button
             onClick={() => setIsInviteOpen(!isInviteOpen)}
-            className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full transition-all shadow-md hover:shadow-lg ml-2 ${isInviteOpen ? "bg-pink-primary text-white scale-105" : "bg-white text-gray-700 hover:text-pink-primary border border-gray-100"}`}
+            className={`flex items-center justify-center w-10 h-10 rounded-full transition-all shadow-md hover:shadow-lg ml-2 border-2 ${isInviteOpen ? "bg-pink-600 border-pink-600 scale-105" : "bg-pink-500 border-white hover:bg-pink-600"}`}
+            title="Profile & Menu"
           >
-            <UserPlus className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span className="hidden sm:inline font-medium text-sm">Undang</span>
+            <span className="font-bold text-white text-base">
+              {userName.charAt(0).toUpperCase()}
+            </span>
           </button>
 
           {isInviteOpen && (
-            <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-pink-100 p-4 animate-in slide-in-from-top-2 fade-in duration-200 z-50">
-              <div className="flex justify-between items-center mb-3">
-                <h3 className="font-bold text-gray-900">Undang Teman</h3>
+            <div className="absolute right-0 top-full mt-3 w-72 sm:w-80 bg-white rounded-2xl shadow-xl border border-pink-100 p-4 sm:p-5 animate-in slide-in-from-top-2 fade-in duration-200 z-50">
+              <div className="flex justify-between items-center mb-3 sm:mb-4">
+                <h3 className="font-bold text-gray-900 text-base sm:text-lg">
+                  Profile
+                </h3>
                 <button
                   onClick={() => setIsInviteOpen(false)}
-                  className="text-gray-400 hover:text-gray-600"
+                  className="text-gray-400 hover:text-gray-600 transition-colors bg-gray-50 p-1 rounded-full"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              <div className="space-y-3">
-                {/* Copy Link */}
+              <div className="space-y-4 sm:space-y-6">
+                {/* 1. Name Input (Editable Text Style) */}
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-gray-500 uppercase">
-                    Bagikan Link
+                  <label className="text-[10px] sm:text-xs font-semibold text-gray-400 ml-3 uppercase tracking-wider">
+                    Nama kamu
                   </label>
-                  <button
-                    onClick={copyLink}
-                    className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-pink-50 rounded-xl border border-gray-100 hover:border-pink-200 transition-all group"
-                  >
-                    <div className="flex items-center gap-3 text-sm text-gray-700 font-medium">
-                      <div className="p-2 bg-white rounded-lg text-pink-500 shadow-sm">
-                        <Link className="w-4 h-4" />
-                      </div>
-                      Salin Link
-                    </div>
-                    {copiedLink ? (
-                      <Check className="w-4 h-4 text-green-500" />
-                    ) : (
-                      <Copy className="w-4 h-4 text-gray-400 group-hover:text-pink-500" />
-                    )}
-                  </button>
+                  <div className="flex items-center justify-between group py-1 px-3">
+                    <input
+                      type="text"
+                      value={userName}
+                      onChange={(e) =>
+                        onUserNameChange && onUserNameChange(e.target.value)
+                      }
+                      className="bg-transparent border-none outline-none text-gray-900 font-bold text-lg sm:text-xl w-full placeholder-gray-300 focus:ring-0 px-0 leading-tight"
+                      placeholder="Ketik nama..."
+                      maxLength={15}
+                    />
+                    <Pencil className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400 group-hover:text-pink-500 transition-colors cursor-pointer" />
+                  </div>
+                  <div className="h-0.5 w-[calc(100%-24px)] mx-auto bg-gray-100 mt-0.5" />
                 </div>
 
-                {/* Copy Code */}
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-gray-500 uppercase">
-                    Kode Room
-                  </label>
+                {/* 2. Room Code & Share */}
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                  {/* Code Display */}
                   <button
                     onClick={copyCode}
-                    className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-pink-50 rounded-xl border border-gray-100 hover:border-pink-200 transition-all group"
+                    className="flex flex-col items-start justify-center p-2.5 sm:p-3 bg-gray-50 hover:bg-gray-100 rounded-xl sm:rounded-2xl border border-transparent transition-all group gap-0.5 relative overflow-hidden"
+                    title="Salin Kode"
                   >
-                    <div className="flex items-center gap-3 text-sm text-gray-700 font-medium">
-                      <div className="p-2 bg-white rounded-lg text-pink-500 shadow-sm">
-                        <span className="w-4 h-4 flex items-center justify-center font-mono text-xs font-bold leading-none">
-                          #
-                        </span>
-                      </div>
-                      <span className="font-mono text-gray-600">{roomId}</span>
+                    <span className="text-[9px] sm:text-[10px] uppercase font-bold text-gray-400">
+                      Kode Room
+                    </span>
+                    <div className="flex items-center gap-2 w-full justify-between mt-0.5">
+                      <span className="font-mono text-gray-900 font-bold text-base sm:text-xl tracking-tight">
+                        {roomId}
+                      </span>
+                      {copiedCode ? (
+                        <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-green-500" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-300 group-hover:text-pink-500" />
+                      )}
                     </div>
-                    {copiedCode ? (
-                      <Check className="w-4 h-4 text-green-500" />
-                    ) : (
-                      <Copy className="w-4 h-4 text-gray-400 group-hover:text-pink-500" />
-                    )}
+                  </button>
+
+                  {/* Share Link Button */}
+                  <button
+                    onClick={copyLink}
+                    className="flex flex-col items-center justify-center p-3 bg-pink-500 hover:bg-pink-600 rounded-2xl border border-transparent transition-all shadow-md hover:shadow-lg text-center gap-1 active:scale-95"
+                    title="Bagikan Link"
+                  >
+                    <span className="font-bold text-sm text-white">
+                      {copiedLink ? "Tersalin!" : "Undang Teman"}
+                    </span>
                   </button>
                 </div>
               </div>

@@ -5,7 +5,9 @@ import Header from "@/components/Header";
 import Canvas, { CanvasHandle } from "@/components/Canvas";
 import Toolbar from "@/components/Toolbar";
 import Toast, { ToastType } from "@/components/ui/Toast";
+import PeerLeftModal from "@/components/PeerLeftModal";
 import { useFirebaseSync } from "@/hooks/useFirebaseSync";
+import { usePresence } from "@/hooks/usePresence";
 import { Tool, Stroke } from "@/lib/types";
 import { set, ref } from "firebase/database";
 import { database } from "@/lib/firebase";
@@ -35,6 +37,35 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [toastType, setToastType] = useState<ToastType>("success");
+
+  // Identity Color (Random per session)
+  const identityColor = useRef(
+    "#" +
+      Math.floor(Math.random() * 16777215)
+        .toString(16)
+        .padStart(6, "0"),
+  ).current;
+
+  // Presence & Peer Left Modal
+  const [userName, setUserName] = useState("Artist");
+  const userId = useRef(
+    `user-${Math.random().toString(36).substr(2, 9)}`,
+  ).current;
+  const { others, updateCursor, setMyName, updateCurrentStroke } = usePresence(
+    roomId,
+    userId,
+    identityColor,
+    userName,
+  );
+  const [showPeerLeftModal, setShowPeerLeftModal] = useState(false);
+  const prevOthersCountRef = useRef(others.length);
+
+  useEffect(() => {
+    if (others.length < prevOthersCountRef.current) {
+      setShowPeerLeftModal(true);
+    }
+    prevOthersCountRef.current = others.length;
+  }, [others.length]);
 
   const triggerToast = (message: string, type: ToastType = "success") => {
     setToastMessage(message);
@@ -152,6 +183,11 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     <main className="min-h-screen bg-gray-bg flex flex-col">
       <Header
         roomId={roomId}
+        userName={userName}
+        onUserNameChange={(name) => {
+          setUserName(name);
+          setMyName(name);
+        }}
         onUndo={undo}
         onRedo={redo}
         canUndo={canUndo}
@@ -163,6 +199,12 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
         type={toastType}
         isVisible={showToast}
         onClose={() => setShowToast(false)}
+      />
+
+      <PeerLeftModal
+        isOpen={showPeerLeftModal}
+        onClose={() => setShowPeerLeftModal(false)}
+        playerCount={others.length + 1}
       />
 
       <div className="flex-1 flex justify-center items-center p-4 pt-20 pb-24">
@@ -177,6 +219,9 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
           onStrokeUpdate={updateStroke}
           selectedStrokeId={selectedStrokeId}
           onSelectStroke={setSelectedStrokeId}
+          others={others}
+          onCursorUpdate={updateCursor}
+          onStrokeInProgress={updateCurrentStroke}
         />
       </div>
 

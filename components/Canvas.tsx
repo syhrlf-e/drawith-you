@@ -8,7 +8,7 @@ import {
   useImperativeHandle,
   forwardRef,
 } from "react";
-import { Stroke, Point, Tool } from "@/lib/types";
+import { Stroke, Point, Tool, UserPresence } from "@/lib/types";
 import {
   drawSmoothLine,
   getCoordinates,
@@ -33,6 +33,10 @@ interface CanvasProps {
   onClear?: () => void;
   selectedStrokeId?: string | null;
   onSelectStroke?: (strokeId: string | null) => void;
+  // Presence
+  others?: UserPresence[];
+  onCursorUpdate?: (x: number, y: number) => void;
+  onStrokeInProgress?: (stroke: Stroke | null) => void;
 }
 
 const Canvas = forwardRef<CanvasHandle, CanvasProps>(
@@ -48,6 +52,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       onClear,
       selectedStrokeId = null,
       onSelectStroke,
+      others = [],
+      onCursorUpdate,
+      onStrokeInProgress,
     },
     ref,
   ) => {
@@ -173,6 +180,86 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         }
       });
 
+      // --- Draw Others' Strokes (Ghost) ---
+      others.forEach((user) => {
+        if (user.currentStroke) {
+          const s = user.currentStroke;
+          if (s.tool === "pen" || s.tool === "eraser") {
+            ctx.globalAlpha = 0.5; // Ghost effect
+            drawSmoothLine(ctx, s.points, s.color, s.size, s.tool === "eraser");
+            ctx.globalAlpha = 1.0;
+          }
+        }
+      });
+
+      // --- Draw Others' Cursors ---
+      others.forEach((user) => {
+        if (user.cursor) {
+          const { x, y } = user.cursor;
+          const userColor = user.color || "#FF1493";
+
+          ctx.save();
+          ctx.translate(x, y);
+
+          // 1. Draw Mouse Pointer (Lucide MousePointer2)
+          // SVG Path provided by user:
+          // <path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/>
+          const cursorPath = new Path2D(
+            "M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z",
+          );
+
+          ctx.fillStyle = userColor;
+          ctx.fill(cursorPath);
+          ctx.strokeStyle = "white"; // White border for contrast
+          ctx.lineWidth = 1;
+          ctx.stroke(cursorPath);
+
+          // 2. Name Tag (Box)
+          const name = user.name || "Anonymous";
+          ctx.font = "bold 12px Satoshi, sans-serif";
+          const metrics = ctx.measureText(name);
+          const paddingX = 10;
+          const boxHeight = 24;
+          const boxWidth = metrics.width + paddingX * 2;
+
+          const labelX = 16;
+          const labelY = 16;
+
+          // Helper: Hex to RGBA inline
+          // Assuming userColor is always hex string like #RRGGBB
+          let r = 0,
+            g = 0,
+            b = 0;
+          if (userColor.startsWith("#")) {
+            r = parseInt(userColor.slice(1, 3), 16);
+            g = parseInt(userColor.slice(3, 5), 16);
+            b = parseInt(userColor.slice(5, 7), 16);
+          }
+          const bgAlpha = 0.2; // 20% opacity as requested (user said "ijo 50%", I'll confirm to 20% or 50%... user said "ijo 50% teks ijo 100% border 100%")
+          // User: "bg nya ijo 50%" -> Okay let's use 0.5 alpha
+          const bgColor = `rgba(${r}, ${g}, ${b}, 0.5)`;
+
+          // Box Background
+          ctx.fillStyle = bgColor;
+          ctx.beginPath();
+          ctx.roundRect(labelX, labelY, boxWidth, boxHeight, 6);
+          ctx.fill();
+
+          // Box Border
+          ctx.strokeStyle = userColor; // 100% opacity
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          // Text
+          ctx.fillStyle = userColor; // 100% opacity
+          ctx.textBaseline = "middle";
+          // We add a tiny bit more paddingY to center vertically in boxHeight=24
+          ctx.fillText(name, labelX + paddingX, labelY + boxHeight / 2);
+
+          ctx.restore();
+        }
+      });
+
       if (currentPoints.length > 0) {
         if (tool === "pen" || tool === "eraser") {
           drawSmoothLine(ctx, currentPoints, color, size, tool === "eraser");
@@ -186,6 +273,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       tool,
       selectedStrokeId,
       editingStrokeId,
+      others, // Trigger redraw when others change
     ]);
 
     useEffect(() => {
@@ -327,6 +415,11 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       const point = getCoordinates(e, canvas);
       if (!point) return;
 
+      // Broadcast Cursor Position
+      if (onCursorUpdate) {
+        onCursorUpdate(point.x, point.y);
+      }
+
       if (tool === "select" && isDraggingStroke && selectedStrokeId) {
         const s = strokes.find((st) => st.id === selectedStrokeId);
         if (!s) return;
@@ -356,10 +449,29 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       if (!isDrawing) return;
       if (tool !== "pen" && tool !== "eraser") return;
 
-      setCurrentPoints((prev) => [...prev, point]);
+      const newPoints = [...currentPoints, point];
+      setCurrentPoints(newPoints);
+
+      // Broadcast Current Stroke
+      if (onStrokeInProgress) {
+        const liveStroke: Stroke = {
+          id: "temp",
+          tool: tool,
+          color: color,
+          size: size,
+          points: newPoints,
+          timestamp: Date.now(),
+        };
+        onStrokeInProgress(liveStroke);
+      }
     };
 
     const stopDrawing = () => {
+      // Broadcast Stop Stroke
+      if (onStrokeInProgress) {
+        onStrokeInProgress(null);
+      }
+
       if (tool === "select" && isDraggingStroke && selectedStrokeId) {
         setIsDraggingStroke(false);
         const s = strokes.find((st) => st.id === selectedStrokeId);
