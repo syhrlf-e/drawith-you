@@ -79,11 +79,12 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
     const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
     // Throttled drag update ref to prevent excessive re-renders
+    // IMPORTANT: Pass strokeId as parameter to avoid stale closure
     const throttledDragUpdateRef = useRef(
-      throttle((newPoints: Point[]) => {
+      throttle((strokeId: string, newPoints: Point[]) => {
         setStrokes((prev) =>
           prev.map((st) => {
-            if (st.id === selectedStrokeId) {
+            if (st.id === strokeId) {
               return { ...st, points: newPoints };
             }
             return st;
@@ -451,7 +452,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         const newPoints = s.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
 
         // Throttled update to prevent excessive re-renders during drag
-        throttledDragUpdateRef.current(newPoints);
+        throttledDragUpdateRef.current(selectedStrokeId, newPoints);
 
         return;
       }
