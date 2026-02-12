@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🎨 Drawith You
 
-## Getting Started
+**Drawith You** is a real-time collaborative drawing application built with **Next.js 14** and **Firebase**. It allows multiple users to draw, write, and design together on a shared digital canvas instantly.
 
-First, run the development server:
+![Drawith You Preview](./public/preview.png)
+
+## ✨ Key Features
+
+- **Real-time Collaboration**: See strokes and changes from other users instantly (powered by Firebase Realtime Database).
+- **Advanced Tools**:
+  - **Pen & Eraser**: Smooth, pressure-simulated drawing.
+  - **Text Tool**: Click-to-edit text with **Smart Contrast** (auto-switches Black/White based on background).
+  - **Fill Bucket**: Flood fill areas with color.
+  - **Select/Move**: Drag and drop any object (text or drawings) across the canvas.
+- **Pro Color Picker**:
+  - **Figma-style** color wheel and saturation control.
+  - **Eye Dropper**: Pick colors directly from your canvas.
+  - **History**: Automatically saves your recently used colors.
+  - **Hex Input**: For precise color selection.
+- **Smart History**:
+  - **Undo/Redo**: Works for strokes, text, and even **Background Color changes**.
+  - **Auto-Save**: Room state is persisted automatically.
+- **Responsive Design**: Works on Desktop, Tablet, and Mobile.
+
+## 🛠️ Tech Stack
+
+- **Framework**: [Next.js 14](https://nextjs.org/) (App Router)
+- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
+- **Backend/DB**: [Firebase Realtime Database](https://firebase.google.com/)
+- **Icons**: [Lucide React](https://lucide.dev/)
+- **Color**: [React Colorful](https://github.com/omgovich/react-colorful)
+
+## 🚀 Getting Started
+
+Follow these steps to run the project locally:
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/yourusername/drawith-you.git
+cd drawith-you
+```
+
+### 2. Install Dependencies
+
+```bash
+npm install
+# or
+yarn install
+# or
+pnpm install
+```
+
+### 3. Configure Firebase
+
+1.  Go to [Firebase Console](https://console.firebase.google.com/).
+2.  Create a new project.
+3.  Enable **Realtime Database** (Start in **Test Mode** for development).
+4.  Copy your web app configuration.
+5.  Create a `.env.local` file in the root directory:
+
+```env
+NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project_id.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_DATABASE_URL=https://your_project_id.firebasedatabase.app
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project_id.appspot.com
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
+```
+
+### 4. Run the Development Server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 🤝 How to Use
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1.  **Create a Room**: Click "Mulai Gambar" or "Buat Room" on the home page.
+2.  **Share**: Copy the URL and send it to a friend.
+3.  **Collaborate**: Open the link on another device/browser and start drawing together!
 
-## Learn More
+## 📄 License
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This project is licensed under the [MIT License](LICENSE).
