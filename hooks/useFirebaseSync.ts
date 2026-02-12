@@ -29,12 +29,25 @@ export const useFirebaseSync = (roomId: string) => {
         // Sort by timestamp if necessary
         strokeArray.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
-        // Custom simple check to avoid new array ref if data is same (prevents render loops)
+        // Efficient deep equality check (replaces expensive JSON.stringify)
         setStrokes((prev) => {
-          if (JSON.stringify(prev) === JSON.stringify(strokeArray)) {
-            return prev;
+          if (prev.length !== strokeArray.length) return strokeArray;
+
+          // Fast comparison: only check critical fields
+          for (let i = 0; i < prev.length; i++) {
+            if (
+              prev[i].id !== strokeArray[i].id ||
+              prev[i].timestamp !== strokeArray[i].timestamp ||
+              prev[i].points.length !== strokeArray[i].points.length ||
+              prev[i].text !== strokeArray[i].text ||
+              prev[i].color !== strokeArray[i].color
+            ) {
+              return strokeArray;
+            }
           }
-          return strokeArray;
+
+          // Data is identical, return previous reference to prevent re-render
+          return prev;
         });
       } else {
         setStrokes([]);

@@ -84,16 +84,7 @@ export const floodFill = (
   startX: number,
   startY: number,
   fillColor: string,
-  // ...
 ) => {
-  // Using simplified floodFill signature for brevity in this update if I were rewriting,
-  // but to preserve existing floodFill logic I shouldn't replace it with partial.
-  // Actually I need to keep the full body of floodFill.
-  // I will append the NEW functions at the end or replace the whole file content to be safe.
-  // Let's reuse the existing floodFill content from the view_file above.
-  /* ... existing floodFill code ... */
-  // Wait, write_to_file overwrites. I must provide full content.
-  // I'll copy the floodFill from step 538.
   const canvas = ctx.canvas;
   const width = canvas.width;
   const height = canvas.height;
@@ -236,4 +227,45 @@ export const isPointNearStroke = (
     if (dist < threshold) return true;
   }
   return false;
+};
+
+// --- Performance Utilities ---
+
+/**
+ * Debounce function - delays execution until after wait milliseconds have elapsed
+ * since the last time it was invoked.
+ */
+export const debounce = <T extends (...args: any[]) => any>(
+  func: T,
+  wait: number,
+): ((...args: Parameters<T>) => void) => {
+  let timeout: NodeJS.Timeout | null = null;
+
+  return function executedFunction(...args: Parameters<T>) {
+    const later = () => {
+      timeout = null;
+      func(...args);
+    };
+
+    if (timeout) clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+};
+
+/**
+ * Throttle function - ensures function is called at most once per limit milliseconds
+ */
+export const throttle = <T extends (...args: any[]) => any>(
+  func: T,
+  limit: number,
+): ((...args: Parameters<T>) => void) => {
+  let inThrottle: boolean = false;
+
+  return function executedFunction(...args: Parameters<T>) {
+    if (!inThrottle) {
+      func(...args);
+      inThrottle = true;
+      setTimeout(() => (inThrottle = false), limit);
+    }
+  };
 };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Header from "@/components/Header";
 import Canvas, { CanvasHandle } from "@/components/Canvas";
 import Toolbar from "@/components/Toolbar";
@@ -11,6 +11,7 @@ import { usePresence } from "@/hooks/usePresence";
 import { Tool, Stroke } from "@/lib/types";
 import { set, ref } from "firebase/database";
 import { database } from "@/lib/firebase";
+import { debounce } from "@/lib/canvas-utils";
 
 interface CanvasPageClientProps {
   roomId: string;
@@ -109,16 +110,22 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     }
   }, [selectedStrokeId, strokes, color]);
 
+  // Debounced Firebase update for color changes (prevents spam)
+  const debouncedUpdateStroke = useRef(
+    debounce((strokeId: string, updates: Partial<Stroke>) => {
+      updateStroke(strokeId, updates);
+    }, 300),
+  ).current;
+
   const handleColorChange = (newColor: string) => {
     setColor(newColor);
 
-    // Live update for selected stroke
+    // Live update for selected stroke with debounce
     if (selectedStrokeId) {
       const stroke = strokes.find((s) => s.id === selectedStrokeId);
       if (stroke && (stroke.tool === "text" || stroke.tool === "pen")) {
-        // Direct update without debounce for instant visual feedback
-        // Firebase handles rapid updates reasonably well, but we rely on the prop update loop
-        updateStroke(selectedStrokeId, { color: newColor });
+        // Debounced update to prevent Firebase spam during color picker drag
+        debouncedUpdateStroke(selectedStrokeId, { color: newColor });
       }
     }
   };

@@ -68,7 +68,33 @@ export const usePresence = (
       if (data) {
         const presenceList = Object.values(data) as UserPresence[];
         // Filter out self
-        setOthers(presenceList.filter((p) => p.id !== userId));
+        const filteredList = presenceList.filter((p) => p.id !== userId);
+
+        // Efficient deep equality check to prevent infinite render loops
+        setOthers((prev) => {
+          if (prev.length !== filteredList.length) return filteredList;
+
+          // Compare critical fields only
+          for (let i = 0; i < prev.length; i++) {
+            const p = prev[i];
+            const f = filteredList[i];
+
+            if (
+              p.id !== f.id ||
+              p.name !== f.name ||
+              p.color !== f.color ||
+              p.cursor?.x !== f.cursor?.x ||
+              p.cursor?.y !== f.cursor?.y ||
+              p.currentStroke?.id !== f.currentStroke?.id ||
+              p.currentStroke?.points.length !== f.currentStroke?.points.length
+            ) {
+              return filteredList;
+            }
+          }
+
+          // Data is identical, return previous reference
+          return prev;
+        });
       } else {
         setOthers([]);
       }

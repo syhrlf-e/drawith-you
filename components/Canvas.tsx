@@ -14,6 +14,7 @@ import {
   getCoordinates,
   floodFill,
   isPointNearStroke,
+  throttle,
 } from "@/lib/canvas-utils";
 
 export interface CanvasHandle {
@@ -77,6 +78,20 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
     const [isDraggingStroke, setIsDraggingStroke] = useState(false);
     const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
+    // Throttled drag update ref to prevent excessive re-renders
+    const throttledDragUpdateRef = useRef(
+      throttle((newPoints: Point[]) => {
+        setStrokes((prev) =>
+          prev.map((st) => {
+            if (st.id === selectedStrokeId) {
+              return { ...st, points: newPoints };
+            }
+            return st;
+          }),
+        );
+      }, 16), // ~60fps max
+    );
+
     useEffect(() => {
       setStrokes(initialStrokes);
     }, [initialStrokes]);
@@ -99,22 +114,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       setBackgroundColor: (color: string) => {},
     }));
 
-    const handleResize = useCallback(() => {
-      if (!containerRef.current || !canvasRef.current) return;
-      const { width, height } = containerRef.current.getBoundingClientRect();
-      const canvas = canvasRef.current;
-      canvas.width = width;
-      canvas.height = height;
-      requestAnimationFrame(redraw);
-    }, []);
-
-    useEffect(() => {
-      window.addEventListener("resize", handleResize);
-      handleResize();
-      return () => window.removeEventListener("resize", handleResize);
-    }, [handleResize]);
-
-    // --- Redraw Logic ---
+    // --- Redraw Logic (defined before handleResize to fix dependency order) ---
     const redraw = useCallback(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -280,6 +280,22 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       redraw();
     }, [redraw]);
 
+    // handleResize needs redraw, so define after redraw
+    const handleResize = useCallback(() => {
+      if (!containerRef.current || !canvasRef.current) return;
+      const { width, height } = containerRef.current.getBoundingClientRect();
+      const canvas = canvasRef.current;
+      canvas.width = width;
+      canvas.height = height;
+      requestAnimationFrame(redraw);
+    }, [redraw]);
+
+    useEffect(() => {
+      window.addEventListener("resize", handleResize);
+      handleResize();
+      return () => window.removeEventListener("resize", handleResize);
+    }, [handleResize]);
+
     // --- Interaction Handlers ---
 
     const hitTestStroke = (x: number, y: number): string | null => {
@@ -434,14 +450,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
 
         const newPoints = s.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
 
-        setStrokes((prev) =>
-          prev.map((st) => {
-            if (st.id === selectedStrokeId) {
-              return { ...st, points: newPoints };
-            }
-            return st;
-          }),
-        );
+        // Throttled update to prevent excessive re-renders during drag
+        throttledDragUpdateRef.current(newPoints);
 
         return;
       }
