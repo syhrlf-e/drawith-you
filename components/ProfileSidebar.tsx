@@ -9,6 +9,10 @@ import {
   Copy,
   Check,
   Link,
+  ChevronDown,
+  ChevronUp,
+  MoreHorizontal,
+  Pencil,
 } from "lucide-react";
 import { HexColorPicker } from "react-colorful";
 import { useState } from "react";
@@ -18,9 +22,10 @@ interface ProfileSidebarProps {
   isOpen: boolean;
   onClose: () => void;
   userName: string;
+  onUserNameChange: (name: string) => void;
   userColor: string;
   backgroundColor: string;
-  roomId?: string; // New: for displaying room code
+  roomId?: string;
   onSave: () => void;
   onClear: () => void;
   onBackgroundChange: (color: string) => void;
@@ -31,6 +36,7 @@ export default function ProfileSidebar({
   isOpen,
   onClose,
   userName,
+  onUserNameChange,
   userColor,
   backgroundColor,
   roomId,
@@ -40,6 +46,8 @@ export default function ProfileSidebar({
   onExitRoom,
 }: ProfileSidebarProps) {
   const [showBackgroundPicker, setShowBackgroundPicker] = useState(false);
+  const [showOthers, setShowOthers] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
   const [alertType, setAlertType] = useState<"clear" | "exit" | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -70,164 +78,162 @@ export default function ProfileSidebar({
     setAlertType(null);
   };
 
+  if (!isOpen) return null;
+
   return (
     <>
-      {/* Backdrop */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40 transition-opacity duration-300"
-          onClick={onClose}
-        />
-      )}
+      {/* Invisible Backdrop for click-outside */}
+      <div className="fixed inset-0 z-40 bg-transparent" onClick={onClose} />
 
-      {/* Sidebar */}
-      <div
-        className={`fixed top-0 right-0 h-full w-80 max-w-[85vw] bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-out ${
-          isOpen ? "translate-x-0" : "translate-x-full"
-        }`}
-      >
-        <div className="flex flex-col h-full">
-          {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">Profile</h2>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+      {/* Popup Menu */}
+      <div className="fixed top-[70px] right-4 w-72 max-h-[80vh] overflow-y-auto bg-white rounded-2xl shadow-2xl border border-pink-100 z-50 animate-in fade-in slide-in-from-top-4 duration-200">
+        <div className="p-4 space-y-1">
+          {/* Header / User Profile & Invite */}
+          <div className="flex items-center gap-3 pb-4 mb-2 border-b border-pink-50">
+            <div
+              className="w-10 h-10 rounded-full border-2 border-pink-100 shadow-sm flex items-center justify-center text-white font-bold text-lg shrink-0"
+              style={{ backgroundColor: userColor }}
             >
-              <X size={20} className="text-gray-600" />
-            </button>
-          </div>
-
-          {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* User Info */}
-            <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border border-gray-200">
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-12 h-12 rounded-full border-2 border-white shadow-md"
-                  style={{ backgroundColor: userColor }}
-                />
-                <div>
-                  <p className="text-sm text-gray-500 font-medium">Nama</p>
-                  <p className="text-base font-semibold text-gray-900">
-                    {userName}
-                  </p>
-                </div>
-              </div>
+              {userName.charAt(0).toUpperCase()}
             </div>
 
-            {/* Room Code & Share Link */}
-            {roomId && (
-              <div className="bg-pink-50 border border-pink-100 rounded-xl p-4 space-y-3">
-                <p className="text-xs font-semibold text-pink-700 uppercase tracking-wider">
-                  Undang Teman
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {/* Copy Code */}
-                  <button
-                    onClick={copyCode}
-                    className="flex flex-col items-start p-3 bg-white hover:bg-gray-50 rounded-lg border border-gray-200 transition-all group"
-                  >
-                    <span className="text-[10px] uppercase font-bold text-gray-400 mb-1">
-                      Kode Room
-                    </span>
-                    <div className="flex items-center gap-2 w-full justify-between">
-                      <span className="font-mono text-gray-900 font-bold text-sm tracking-tight">
-                        {roomId}
+            <div className="flex-1 min-w-0 group">
+              <p className="text-[10px] text-pink-400 font-bold uppercase tracking-wider mb-0.5">
+                Profile
+              </p>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0">
+                  {isEditingName ? (
+                    <input
+                      type="text"
+                      value={userName}
+                      onChange={(e) => onUserNameChange(e.target.value)}
+                      onBlur={() => setIsEditingName(false)}
+                      onKeyDown={(e) =>
+                        e.key === "Enter" && setIsEditingName(false)
+                      }
+                      autoFocus
+                      className="w-full text-base font-bold text-gray-800 border-b-2 border-pink-300 focus:border-pink-500 outline-none bg-transparent px-0 py-0"
+                      maxLength={15}
+                    />
+                  ) : (
+                    <button
+                      onClick={() => setIsEditingName(true)}
+                      className="flex items-center gap-1.5 hover:bg-gray-50 rounded-lg pr-2 -ml-1 pl-1 py-0.5 transition-colors max-w-full text-left"
+                    >
+                      <span className="text-base font-bold text-gray-800 truncate block">
+                        {userName}
                       </span>
-                      {copiedCode ? (
-                        <Check className="w-4 h-4 text-green-500" />
-                      ) : (
-                        <Copy className="w-4 h-4 text-gray-300 group-hover:text-pink-500" />
-                      )}
-                    </div>
-                  </button>
-
-                  {/* Copy Link */}
-                  <button
-                    onClick={copyLink}
-                    className="flex flex-col items-center justify-center p-3 bg-pink-primary hover:bg-pink-accent rounded-lg transition-all text-center gap-1 active:scale-95 shadow-sm"
-                  >
-                    <Link className="w-5 h-5 text-white" />
-                    <span className="font-semibold text-xs text-white">
-                      {copiedLink ? "Tersalin!" : "Salin Link"}
-                    </span>
-                  </button>
+                      <Pencil
+                        size={12}
+                        className="text-gray-400 group-hover:text-pink-500 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      />
+                    </button>
+                  )}
                 </div>
-              </div>
-            )}
 
-            {/* Actions */}
-            <div className="space-y-3">
-              {/* Simpan Gambar */}
-              <button
-                onClick={() => {
-                  onSave();
-                  onClose();
-                }}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-xl transition-colors shadow-sm font-medium"
-              >
-                <Download size={20} />
-                <span className="text-base">Simpan Gambar</span>
-              </button>
-
-              {/* Bersihkan Kanvas */}
-              <button
-                onClick={() => setAlertType("clear")}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl transition-colors shadow-sm font-medium"
-              >
-                <Trash2 size={20} />
-                <span className="text-base">Bersihkan Kanvas</span>
-              </button>
-
-              {/* Latar Belakang */}
-              <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+                {/* Inline Invite Button */}
                 <button
-                  onClick={() => setShowBackgroundPicker(!showBackgroundPicker)}
-                  className="w-full flex items-center justify-between"
+                  onClick={copyLink}
+                  className="p-1.5 text-gray-400 hover:text-pink-500 hover:bg-pink-50 rounded-full transition-colors"
+                  title="Undang Teman (Salin Link)"
                 >
-                  <div className="flex items-center gap-3">
-                    <Paintbrush size={20} className="text-gray-700" />
-                    <span className="text-base font-medium text-gray-900">
-                      Latar Belakang
-                    </span>
-                  </div>
+                  {copiedLink ? (
+                    <Check size={16} className="text-green-500" />
+                  ) : (
+                    <Link size={16} />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Main Actions - Minimalist Style (No Boxes) */}
+          <div className="space-y-1">
+            <button
+              onClick={() => {
+                onSave();
+                onClose();
+              }}
+              className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 text-gray-600 hover:text-gray-900 rounded-xl transition-colors text-sm font-medium group"
+            >
+              <Download
+                size={18}
+                className="text-gray-400 group-hover:text-blue-500 transition-colors"
+              />
+              Simpan Gambar
+            </button>
+
+            <button
+              onClick={() => setAlertType("clear")}
+              className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 text-gray-600 hover:text-gray-900 rounded-xl transition-colors text-sm font-medium group"
+            >
+              <Trash2
+                size={18}
+                className="text-gray-400 group-hover:text-red-500 transition-colors"
+              />
+              Bersihkan Kanvas
+            </button>
+
+            {/* Background Picker */}
+            <div className="rounded-xl overflow-hidden">
+              <button
+                onClick={() => setShowBackgroundPicker(!showBackgroundPicker)}
+                className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 text-gray-600 hover:text-gray-900 transition-colors group"
+              >
+                <div className="flex items-center gap-3">
+                  <Paintbrush
+                    size={18}
+                    className="text-gray-400 group-hover:text-purple-500 transition-colors"
+                  />
+                  <span className="text-sm font-medium">Latar Belakang</span>
+                </div>
+                <div className="flex items-center gap-2">
                   <div
-                    className="w-8 h-8 rounded-lg border-2 border-gray-300 shadow-sm"
+                    className="w-5 h-5 rounded-full border border-gray-200 shadow-sm"
                     style={{ backgroundColor }}
                   />
-                </button>
+                </div>
+              </button>
 
-                {showBackgroundPicker && (
-                  <div className="mt-4 pt-4 border-t border-gray-200">
-                    <HexColorPicker
-                      color={backgroundColor}
-                      onChange={onBackgroundChange}
-                      style={{ width: "100%" }}
-                    />
-                    <div className="mt-3 flex items-center justify-between">
-                      <span className="text-sm text-gray-600 font-medium">
-                        Warna:
-                      </span>
-                      <span className="text-sm font-mono font-semibold text-gray-900 bg-gray-100 px-3 py-1 rounded-lg">
-                        {backgroundColor.toUpperCase()}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {showBackgroundPicker && (
+                <div className="p-3 bg-gray-50/50 rounded-xl mt-1 animate-in slide-in-from-top-2">
+                  <HexColorPicker
+                    color={backgroundColor}
+                    onChange={onBackgroundChange}
+                    style={{ width: "100%", height: "100px" }}
+                  />
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Footer - Keluar Room */}
-          <div className="p-4 border-t border-gray-200 bg-gray-50">
+          <div className="h-px bg-pink-100 mx-2" />
+
+          {/* Lainnya (Others) Section */}
+          <div className="space-y-1">
             <button
-              onClick={() => setAlertType("exit")}
-              className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-gray-800 hover:bg-gray-900 text-white rounded-xl transition-colors shadow-sm font-medium"
+              onClick={() => setShowOthers(!showOthers)}
+              className="w-full flex items-center justify-between px-3 py-2 text-gray-500 hover:text-pink-600 hover:bg-pink-50 rounded-lg transition-colors"
             >
-              <LogOut size={20} />
-              <span className="text-base">Keluar Room</span>
+              <div className="flex items-center gap-2">
+                <MoreHorizontal size={18} />
+                <span className="text-sm font-bold">Lainnya</span>
+              </div>
+              {showOthers ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>
+
+            {showOthers && (
+              <div className="pt-1 pl-2 animate-in slide-in-from-top-2 duration-200">
+                <button
+                  onClick={() => setAlertType("exit")}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 text-red-500 hover:bg-red-50 rounded-xl transition-colors text-sm font-medium"
+                >
+                  <LogOut size={16} />
+                  Keluar Room
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

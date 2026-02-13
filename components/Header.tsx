@@ -64,10 +64,23 @@ export default function Header({
 
   return (
     <header className="fixed top-0 left-0 right-0 bg-white/80 backdrop-blur-md border-b border-gray-100 px-4 py-3 flex items-center justify-between z-40 shadow-sm transition-all">
-      <div className="flex items-center gap-2 sm:gap-4">
-        <h1 className="text-xl sm:text-2xl font-bold text-pink-primary tracking-tight truncate max-w-[120px] sm:max-w-none">
-          Drawith You
+      <div className="flex items-center gap-2 sm:gap-3">
+        <h1 className="text-xl sm:text-2xl font-bold text-pink-primary tracking-tight">
+          Drawith
         </h1>
+        {roomId && (
+          <>
+            <div className="w-1 h-1 rounded-full bg-gray-300" />
+            <button
+              onClick={copyCode}
+              className="text-xs sm:text-sm font-medium text-gray-400 hover:text-pink-500 transition-colors flex items-center gap-1 cursor-pointer -ml-1 pl-1"
+              title="Salin Kode Room"
+            >
+              <span className="font-mono tracking-wide">{roomId}</span>
+              {copiedCode && <Check className="w-3 h-3 text-green-500" />}
+            </button>
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-2">

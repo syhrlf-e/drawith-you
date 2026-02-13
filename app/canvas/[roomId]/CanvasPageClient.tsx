@@ -10,6 +10,7 @@ import Toast, { ToastType } from "@/components/ui/Toast";
 import PeerLeftModal from "@/components/PeerLeftModal";
 import { useSupabaseSync } from "@/hooks/useSupabaseSync";
 import { useSupabasePresence } from "@/hooks/useSupabasePresence";
+import { generateRandomName } from "@/lib/name-generator";
 import { Tool, Stroke } from "@/lib/types";
 import { throttle } from "@/lib/canvas-utils";
 import { supabase } from "@/lib/supabase";
@@ -19,7 +20,7 @@ interface CanvasPageClientProps {
 }
 
 export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
-  const [tool, setTool] = useState<Tool>("pen");
+  const [tool, setTool] = useState<Tool>(null);
   const [color, setColor] = useState("#000000");
   const [size, setSize] = useState(5);
   const [feather, setFeather] = useState(0); // 0 = sharp, >0 = soft
@@ -61,7 +62,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
   ).current;
 
   // Presence & Peer Left Modal
-  const [userName, setUserName] = useState("Artist");
+  const [userName, setUserName] = useState(() => generateRandomName());
   const userId = useRef(
     `user-${Math.random().toString(36).substr(2, 9)}`,
   ).current;
@@ -288,6 +289,10 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
         isOpen={showProfileSidebar}
         onClose={() => setShowProfileSidebar(false)}
         userName={userName}
+        onUserNameChange={(name) => {
+          setUserName(name);
+          setMyName(name);
+        }}
         userColor={identityColor}
         backgroundColor={backgroundColor}
         roomId={roomId}

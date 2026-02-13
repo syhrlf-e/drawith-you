@@ -23,7 +23,7 @@ import { useState } from "react";
 import AlertModal from "./ui/AlertModal";
 
 interface ToolbarProps {
-  currentTool: Tool;
+  currentTool: Tool | null;
   currentColor: string;
   onToolChange: (tool: Tool) => void;
   onColorChange: (color: string) => void;

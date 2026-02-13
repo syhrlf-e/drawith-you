@@ -1,4 +1,11 @@
-export type Tool = "pen" | "eraser" | "text" | "fill" | "select" | "background";
+export type Tool =
+  | "pen"
+  | "eraser"
+  | "text"
+  | "fill"
+  | "select"
+  | "background"
+  | null;
 
 export interface Point {
   x: number;

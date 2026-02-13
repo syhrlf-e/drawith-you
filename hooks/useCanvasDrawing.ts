@@ -104,6 +104,7 @@ export const useCanvasDrawing = ({
       if (!point) return;
 
       const currentTool = toolRef.current;
+      if (!currentTool) return;
 
       if (currentTool === "select") {
         const hitId = hitTest(point.x, point.y);
