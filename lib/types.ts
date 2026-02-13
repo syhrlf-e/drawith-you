@@ -34,3 +34,8 @@ export interface UserPresence {
   lastActive: number;
   currentStroke: Stroke | null;
 }
+
+export type HistoryAction =
+  | { type: "ADD"; stroke: Stroke }
+  | { type: "UPDATE"; original: Stroke; new: Stroke }
+  | { type: "DELETE"; stroke: Stroke };

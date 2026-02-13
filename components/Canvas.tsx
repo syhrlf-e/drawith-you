@@ -8,7 +8,7 @@ import {
   forwardRef,
   useCallback,
 } from "react";
-import { Point, Stroke, Tool, UserPresence } from "@/lib/types";
+import { Point, Stroke, Tool, UserPresence, HistoryAction } from "@/lib/types";
 import { getCoordinates, isPointNearStroke } from "@/lib/canvas-utils";
 import { useCanvasDrawing } from "@/hooks/useCanvasDrawing";
 import { useCanvasRender } from "@/hooks/useCanvasRender";
@@ -35,6 +35,7 @@ interface CanvasProps {
   others?: UserPresence[];
   onCursorUpdate?: (x: number, y: number) => void;
   onStrokeInProgress?: (stroke: Stroke | null) => void;
+  onHistoryAction?: (action: HistoryAction) => void; // New Prop
 }
 
 const Canvas = forwardRef<CanvasHandle, CanvasProps>(
@@ -54,6 +55,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       others = [],
       onCursorUpdate,
       onStrokeInProgress,
+      onHistoryAction,
     },
     ref,
   ) => {
@@ -161,6 +163,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         if (onCursorUpdate) onCursorUpdate(x, y);
       },
       onStrokeInProgress,
+      onHistoryAction, // Pass it down
     });
 
     const { redraw } = useCanvasRender({

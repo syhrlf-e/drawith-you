@@ -31,208 +31,208 @@ export const useSupabasePresence = (
     currentStroke: null,
   });
   const channelRef = useRef<RealtimeChannel | null>(null);
-  const roomReadyRef = useRef(false); // Track if room is ready for presence updates
 
-  // Throttled update to Supabase (non-blocking fire-and-forget)
-  const updatePresence = useRef(
-    throttle((presence: UserPresence) => {
-      if (!roomId || !userId) return;
-      if (!roomReadyRef.current) return; // Don't update until room is confirmed ready
-
-      // Fire-and-forget - don't wait for response to keep cursor smooth
-      supabase
-        .from("presence")
-        .upsert({
-          id: userId,
-          room_id: roomId,
-          user_id: userId,
-          name: presence.name,
-          color: presence.color,
-          cursor: presence.cursor,
-          current_stroke: presence.currentStroke,
-          last_active: presence.lastActive,
-        })
-        .then(({ error }) => {
-          if (error) console.error("Presence update failed", error);
-        });
-    }, 100), // Update max every 100ms (10fps)
-  ).current;
-
-  // Initial setup and real-time subscription
+  // 1. Initial Presence Tracking & Subscription
+  // 1. Initial Presence Tracking & Subscription
   useEffect(() => {
     if (!roomId || !userId) return;
 
-    const initPresence = async () => {
-      // 1. Ensure room exists (Wait for useSupabaseSync to create it)
+    const setupPresence = async () => {
+      // WaitForRoom creation logic (copied from previous version)
+      // Although Ephemeral doesn't stricter require it, good for consistency
       let roomExists = false;
       let attempts = 0;
-      const maxAttempts = 10; // Increase attempts
+      const maxAttempts = 10;
 
       while (!roomExists && attempts < maxAttempts) {
-        // Check if room exists
-        const { data: room, error } = await supabase
+        const { data, error } = await supabase
           .from("rooms")
           .select("id")
           .eq("id", roomId)
           .single();
 
-        if (room) {
+        if (data) {
           roomExists = true;
         } else {
-          // Wait longer between checks
           await new Promise((r) => setTimeout(r, 1000));
           attempts++;
         }
       }
 
+      // If still not exists, try to create (fallback)
       if (!roomExists) {
-        // Fallback: Try to create it only if waiting failed (last resort)
-        const { error: createError } = await supabase
-          .from("rooms")
-          .upsert({ id: roomId })
-          .select()
-          .single();
-
-        if (!createError) {
-          roomExists = true;
-        } else {
-          console.error(
-            "Failed to join room: Room not found and creation failed",
-            createError,
-          );
-          return;
-        }
+        await supabase.from("rooms").upsert({ id: roomId }).select().single();
       }
 
-      // Set initial presence
-      await supabase.from("presence").upsert({
-        id: userId,
-        room_id: roomId,
-        user_id: userId,
-        name: myPresenceRef.current.name,
-        color: myPresenceRef.current.color,
-        cursor: null,
-        current_stroke: null,
-        last_active: Date.now(),
+      // NOW subscribe
+      if (channelRef.current) return; // Prevent double sub
+
+      const channel = supabase.channel(`presence:${roomId}`, {
+        config: {
+          presence: {
+            key: userId,
+          },
+        },
       });
 
-      // Fetch initial presence
-      const { data } = await supabase
-        .from("presence")
-        .select("*")
-        .eq("room_id", roomId)
-        .neq("user_id", userId);
+      channel
+        .on("presence", { event: "sync" }, () => {
+          const state = channel.presenceState<UserPresence>();
+          const validOthers: UserPresence[] = [];
 
-      if (data) {
-        const presenceList: UserPresence[] = data.map((row) => ({
-          id: row.user_id,
-          name: row.name,
-          color: row.color,
-          cursor: row.cursor,
-          lastActive: row.last_active,
-          currentStroke: row.current_stroke,
-        }));
-        setOthers(presenceList);
-      }
-
-      // Mark room as ready for presence updates
-      roomReadyRef.current = true;
-    };
-
-    initPresence();
-
-    // Subscribe to presence changes
-    const channel = supabase
-      .channel(`presence:${roomId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "presence",
-          filter: `room_id=eq.${roomId}`,
-        },
-        (payload) => {
-          const payloadNew = payload.new as any;
-          const payloadOld = payload.old as any;
-
-          if (payloadNew && payloadNew.user_id !== userId) {
-            const newPresence: UserPresence = {
-              id: payloadNew.user_id,
-              name: payloadNew.name,
-              color: payloadNew.color,
-              cursor: payloadNew.cursor,
-              lastActive: payloadNew.last_active,
-              currentStroke: payloadNew.current_stroke,
-            };
-
-            if (
-              payload.eventType === "INSERT" ||
-              payload.eventType === "UPDATE"
-            ) {
-              setOthers((prev) => {
-                const existing = prev.findIndex((p) => p.id === newPresence.id);
-                if (existing >= 0) {
-                  // Update existing
-                  const updated = [...prev];
-                  updated[existing] = newPresence;
-                  return updated;
-                } else {
-                  // Add new
-                  return [...prev, newPresence];
-                }
-              });
-            } else if (payload.eventType === "DELETE" && payloadOld) {
-              setOthers((prev) =>
-                prev.filter((p) => p.id !== payloadOld.user_id),
-              );
+          for (const key in state) {
+            if (key === userId) continue;
+            const presences = state[key];
+            if (presences && presences.length > 0) {
+              validOthers.push(presences[0] as UserPresence);
             }
           }
-        },
-      )
-      .subscribe();
+          setOthers(validOthers);
+        })
+        .on("broadcast", { event: "cursor" }, ({ payload }) => {
+          if (payload.userId === userId) return;
+          setOthers((prev) => {
+            const existingIndex = prev.findIndex(
+              (p) => p.id === payload.userId,
+            );
+            if (existingIndex >= 0) {
+              const updated = [...prev];
+              updated[existingIndex] = {
+                ...updated[existingIndex],
+                cursor: { x: payload.x, y: payload.y },
+                lastActive: Date.now(),
+              };
+              return updated;
+            }
+            return prev;
+          });
+        })
+        .on("broadcast", { event: "stroke-start" }, ({ payload }) => {
+          setOthers((prev) => {
+            const existingIndex = prev.findIndex(
+              (p) => p.id === payload.userId,
+            );
+            if (existingIndex >= 0) {
+              const updated = [...prev];
+              updated[existingIndex] = {
+                ...updated[existingIndex],
+                currentStroke: payload.stroke,
+              };
+              return updated;
+            }
+            return prev;
+          });
+        })
+        .on("broadcast", { event: "stroke-end" }, ({ payload }) => {
+          setOthers((prev) => {
+            const existingIndex = prev.findIndex(
+              (p) => p.id === payload.userId,
+            );
+            if (existingIndex >= 0) {
+              const updated = [...prev];
+              updated[existingIndex] = {
+                ...updated[existingIndex],
+                currentStroke: null,
+              };
+              return updated;
+            }
+            return prev;
+          });
+        })
+        .subscribe(async (status) => {
+          console.log(
+            `[Presence] Channel status: ${status} for room ${roomId}`,
+          );
+          if (status === "SUBSCRIBED") {
+            const trackStatus = await channel.track(myPresenceRef.current);
+            console.log(`[Presence] Track result: ${trackStatus}`);
+          }
+        });
 
-    channelRef.current = channel;
+      channelRef.current = channel;
+    };
 
-    // Cleanup on unmount
+    setupPresence();
+
     return () => {
-      roomReadyRef.current = false; // Reset room ready state
-      channel.unsubscribe();
-      // Remove presence from database
-      supabase.from("presence").delete().eq("id", userId).then();
+      // Create a cleanup function variable to capture channel
+      if (channelRef.current) {
+        channelRef.current.unsubscribe();
+        channelRef.current = null;
+      }
     };
   }, [roomId, userId]);
 
-  // Sync color changes
+  // Sync basic info changes (Name/Color) via Presence Track
   useEffect(() => {
-    myPresenceRef.current.color = color;
-    updatePresence(myPresenceRef.current);
-  }, [color, updatePresence]);
+    // Check if channel is ready
+    if (channelRef.current) {
+      // Just re-track with new data
+      channelRef.current.track(myPresenceRef.current);
+    }
+  }, [color, initialName]); // When props change
 
-  const setMyName = useCallback(
-    (name: string) => {
-      myPresenceRef.current.name = name;
-      updatePresence(myPresenceRef.current);
-    },
-    [updatePresence],
-  );
+  // Throttled Broadcasts
+  const broadcastCursor = useRef(
+    throttle((x: number, y: number) => {
+      if (!channelRef.current) return;
+      channelRef.current.send({
+        type: "broadcast",
+        event: "cursor",
+        payload: { userId, x, y },
+      });
+    }, 50), // 20fps cap for network hygiene
+  ).current;
+
+  const broadcastStrokeStart = useRef((stroke: Stroke) => {
+    if (!channelRef.current) return;
+    channelRef.current.send({
+      type: "broadcast",
+      event: "stroke-start",
+      payload: { userId, stroke },
+    });
+  }).current;
+
+  const broadcastStrokeEnd = useRef(() => {
+    if (!channelRef.current) return;
+    channelRef.current.send({
+      type: "broadcast",
+      event: "stroke-end",
+      payload: { userId },
+    });
+  }).current;
+
+  // -- Exposed Methods with local ref updates --
+
+  const setMyName = useCallback((name: string) => {
+    myPresenceRef.current.name = name;
+    if (channelRef.current) {
+      channelRef.current.track(myPresenceRef.current);
+    }
+  }, []);
 
   const updateCursor = useCallback(
     (x: number, y: number) => {
       myPresenceRef.current.cursor = { x, y };
       myPresenceRef.current.lastActive = Date.now();
-      updatePresence(myPresenceRef.current);
+      // We don't track() every move (too expensive for Presence). Use Broadcast.
+      broadcastCursor(x, y);
     },
-    [updatePresence],
+    [broadcastCursor],
   );
 
   const updateCurrentStroke = useCallback(
     (stroke: Stroke | null) => {
       myPresenceRef.current.currentStroke = stroke;
       myPresenceRef.current.lastActive = Date.now();
-      updatePresence(myPresenceRef.current);
+
+      if (stroke) {
+        broadcastStrokeStart(stroke);
+      } else {
+        broadcastStrokeEnd();
+      }
     },
-    [updatePresence],
+    [broadcastStrokeStart, broadcastStrokeEnd],
   );
 
   return {

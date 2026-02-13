@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Point, Stroke, Tool } from "@/lib/types";
+import { Point, Stroke, Tool, HistoryAction } from "@/lib/types";
 import { getCoordinates, throttle } from "@/lib/canvas-utils";
 
 interface UseCanvasDrawingProps {
@@ -16,6 +16,7 @@ interface UseCanvasDrawingProps {
   selectedStrokeId?: string | null;
   onCursorUpdate?: (x: number, y: number) => void;
   onStrokeInProgress?: (stroke: Stroke | null) => void;
+  onHistoryAction?: (action: HistoryAction) => void; // New Prop
 }
 
 export const useCanvasDrawing = ({
@@ -32,6 +33,7 @@ export const useCanvasDrawing = ({
   selectedStrokeId,
   onCursorUpdate,
   onStrokeInProgress,
+  onHistoryAction,
 }: UseCanvasDrawingProps) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
@@ -74,6 +76,8 @@ export const useCanvasDrawing = ({
   // -- Select/Move Tool State --
   const [isDraggingStroke, setIsDraggingStroke] = useState(false);
   const isDraggingStrokeRef = useRef(isDraggingStroke);
+  const originalStrokeRef = useRef<Stroke | null>(null); // Track original state for Undo
+
   useEffect(() => {
     isDraggingStrokeRef.current = isDraggingStroke;
   }, [isDraggingStroke]);
@@ -114,6 +118,7 @@ export const useCanvasDrawing = ({
 
           const s = strokesRef.current.find((st) => st.id === hitId);
           if (s && s.points[0]) {
+            originalStrokeRef.current = parseStroke(s); // Deep copy original state
             setDragOffset({
               x: point.x - s.points[0].x,
               y: point.y - s.points[0].y,
@@ -257,7 +262,31 @@ export const useCanvasDrawing = ({
 
     // If dragging, just stop the flag. State is already updated live.
     if (toolRef.current === "select" && isDraggingStrokeRef.current) {
+      if (selectedStrokeId && originalStrokeRef.current && onHistoryAction) {
+        // Find the final state of the stroke
+        const finalStroke = strokesRef.current.find(
+          (s) => s.id === selectedStrokeId,
+        );
+
+        const originalStroke = originalStrokeRef.current;
+
+        // Check if actually changed
+        if (
+          finalStroke &&
+          originalStroke &&
+          (finalStroke.points[0].x !== originalStroke.points[0].x ||
+            finalStroke.points[0].y !== originalStroke.points[0].y)
+        ) {
+          onHistoryAction({
+            type: "UPDATE",
+            original: originalStroke,
+            new: finalStroke,
+          });
+        }
+      }
+
       setIsDraggingStroke(false);
+      originalStrokeRef.current = null;
       return;
     }
 
@@ -280,7 +309,7 @@ export const useCanvasDrawing = ({
     // Clear Ref explicitly to prevent stale points
     currentPointsRef.current = [];
     setCurrentPoints([]);
-  }, [onStrokeInProgress, onStrokeComplete]);
+  }, [onStrokeInProgress, onStrokeComplete, selectedStrokeId, onHistoryAction]);
 
   return {
     isDrawing,
@@ -291,3 +320,8 @@ export const useCanvasDrawing = ({
     stopDrawing,
   };
 };
+
+// Helper for deep cloning stroke to avoid reference issues
+function parseStroke(stroke: Stroke): Stroke {
+  return JSON.parse(JSON.stringify(stroke));
+}

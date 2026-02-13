@@ -41,6 +41,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     canRedo,
     clearCanvas: clearSupabaseCanvas,
     deleteStroke,
+    recordAction,
   } = useSupabaseSync(roomId, ignoreIds.current);
 
   const {
@@ -85,6 +86,9 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     const storedName = localStorage.getItem(STORAGE_KEYS.USERNAME);
     if (storedName) {
       setUserName(storedName);
+      // We rely on the hook's useEffect to sync this now, but effective immediately:
+      // However, we can't call setMyName here because it's defined AFTER this effect.
+      // So we rely on the hook modification we just made.
     } else {
       const newName = generateRandomName();
       localStorage.setItem(STORAGE_KEYS.USERNAME, newName);
@@ -303,6 +307,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
           others={others}
           onCursorUpdate={updateCursor}
           onStrokeInProgress={updateCurrentStroke}
+          onHistoryAction={recordAction}
         />
       </div>
 

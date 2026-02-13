@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Stroke } from "@/lib/types";
+import { Stroke, HistoryAction } from "@/lib/types";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 export const useSupabaseSync = (
@@ -18,8 +18,8 @@ export const useSupabaseSync = (
   }, [ignoreUpdateIds]);
 
   // Undo/Redo stacks (simpler than full history)
-  const [undoStack, setUndoStack] = useState<Stroke[]>([]);
-  const [redoStack, setRedoStack] = useState<Stroke[]>([]);
+  const [undoStack, setUndoStack] = useState<HistoryAction[]>([]);
+  const [redoStack, setRedoStack] = useState<HistoryAction[]>([]);
 
   // Initialize room and fetch initial strokes
   useEffect(() => {
@@ -130,16 +130,12 @@ export const useSupabaseSync = (
     };
   }, [roomId]);
 
-  const addStroke = useCallback(
+  // Debounce map for network updates to avoid flooding Supabase
+  const networkUpdateTimeouts = useRef<{ [key: string]: NodeJS.Timeout }>({});
+
+  // Core Sync Helpers (Network Only)
+  const syncInsert = useCallback(
     (stroke: Stroke) => {
-      // OPTIMISTIC UPDATE FIRST - immediate UI feedback
-      setStrokes((prev) => [...prev, stroke]);
-
-      // Add to undo stack, clear redo stack on new action
-      setUndoStack((prev) => [...prev, stroke]);
-      setRedoStack([]);
-
-      // Background sync to Supabase (fire-and-forget, non-blocking)
       supabase
         .from("strokes")
         .insert({
@@ -160,23 +156,13 @@ export const useSupabaseSync = (
     [roomId],
   );
 
-  // Debounce map for network updates to avoid flooding Supabase
-  const networkUpdateTimeouts = useRef<{ [key: string]: NodeJS.Timeout }>({});
-
-  const updateStroke = useCallback(
+  const syncUpdate = useCallback(
     (strokeId: string, updates: Partial<Stroke>) => {
-      // 1. OPTIMISTIC UPDATE - Immediate UI feedback
-      setStrokes((prev) =>
-        prev.map((s) => (s.id === strokeId ? { ...s, ...updates } : s)),
-      );
-
-      // 2. DEBOUNCED NETWORK SYNC
-      // Clear existing timeout for this stroke
+      // Check debounce
       if (networkUpdateTimeouts.current[strokeId]) {
         clearTimeout(networkUpdateTimeouts.current[strokeId]);
       }
 
-      // Set new timeout (e.g. 100ms)
       networkUpdateTimeouts.current[strokeId] = setTimeout(() => {
         const updateData: any = {};
         if (updates.color !== undefined) updateData.color = updates.color;
@@ -192,79 +178,179 @@ export const useSupabaseSync = (
           .eq("id", strokeId)
           .then(({ error }) => {
             if (error) console.error("Error syncing stroke update:", error);
-            // Cleanup timeout reference
             delete networkUpdateTimeouts.current[strokeId];
           });
-      }, 100); // 100ms debounce
+      }, 100);
     },
     [],
   );
 
-  const deleteStroke = useCallback(
-    (strokeId: string) => {
-      // 1. OPTIMISTIC UPDATE
-      setStrokes((prev) => prev.filter((s) => s.id !== strokeId));
+  const syncDelete = useCallback((strokeId: string) => {
+    supabase
+      .from("strokes")
+      .delete()
+      .eq("id", strokeId)
+      .then(({ error }) => {
+        if (error) console.error("Error deleting stroke:", error);
+      });
+  }, []);
 
-      // 2. NETWORK SYNC
-      supabase
-        .from("strokes")
-        .delete()
-        .eq("id", strokeId)
-        .then(({ error }) => {
-          if (error) console.error("Error deleting stroke:", error);
-        });
+  // -- HISTORY DISPATCHER --
+  const dispatch = useCallback(
+    (action: HistoryAction) => {
+      // 1. Optimistic Update Local State
+      if (action.type === "ADD") {
+        setStrokes((prev) => [...prev, action.stroke]);
+        syncInsert(action.stroke);
+      } else if (action.type === "UPDATE") {
+        setStrokes((prev) =>
+          prev.map((s) =>
+            s.id === action.new.id ? { ...s, ...action.new } : s,
+          ),
+        );
+        syncUpdate(action.new.id, action.new);
+      } else if (action.type === "DELETE") {
+        setStrokes((prev) => prev.filter((s) => s.id !== action.stroke.id));
+        syncDelete(action.stroke.id);
+      }
+
+      // 2. Add to History
+      setUndoStack((prev) => [...prev, action]);
+      setRedoStack([]);
     },
-    [roomId],
+    [syncInsert, syncUpdate, syncDelete],
+  );
+
+  const addStroke = useCallback(
+    (stroke: Stroke) => {
+      dispatch({ type: "ADD", stroke });
+    },
+    [dispatch],
+  );
+
+  const updateStroke = useCallback(
+    (strokeId: string, updates: Partial<Stroke>) => {
+      // NOTE: Traditional updateStroke is "blind" to history if we don't know original state.
+      // This is used for live dragging where we DON'T want history.
+      // Or for minor updates.
+      // IF we want history, use recordAction explicitly.
+
+      setStrokes((prev) =>
+        prev.map((s) => (s.id === strokeId ? { ...s, ...updates } : s)),
+      );
+      syncUpdate(strokeId, updates);
+    },
+    [syncUpdate],
+  );
+
+  const deleteStroke = useCallback((strokeId: string) => {
+    // We need the stroke object to be able to undo delete
+    setStrokes((prev) => {
+      const s = prev.find((p) => p.id === strokeId);
+      if (s) {
+        // We found it, dispatch properly if we can, but we are inside setter...
+        // Can't dispatch inside setter.
+        // So we must find it outside.
+        return prev; // Don't delete here, do it in dispatch
+      }
+      return prev;
+    });
+
+    // Find it from current state (might be stale if inside callback, but `strokes` is dep?)
+    // We need to use Functional Update pattern or `strokesRef`.
+    // Let's rely on the component/caller to pass the object if they want robust undo?
+    // OR, we just find it in `strokes` state.
+    // Since `deleteStroke` is a callback, it captures `strokes` at creation time if included in deps.
+    // If we add `strokes` to deps, `deleteStroke` changes on every stroke change -> bad for perf.
+    //
+    // BETTER: The caller usually has the stroke ID.
+    // `dispatch` needs the full object for undo.
+    // Let's try to find it in the current state wrapper.
+    // Actually, for now, let's just implement `deleteStroke` using `setStrokes` callback to find it,
+    // and THEN dispatch.
+    // But `dispatch` updates state too.
+    //
+    // SIMPLIFICATION: `deleteStroke` provided here is a helper.
+    // If we want history, we should find the stroke first.
+    // Use a ref to access latest strokes without re-creating callback.
+  }, []);
+
+  // Use a Ref for strokes to access in non-reactive handlers
+  const strokesRef = useRef(strokes);
+  useEffect(() => {
+    strokesRef.current = strokes;
+  }, [strokes]);
+
+  const deleteStrokeWithHistory = useCallback(
+    (strokeId: string) => {
+      const s = strokesRef.current.find((st) => st.id === strokeId);
+      if (s) {
+        dispatch({ type: "DELETE", stroke: s });
+      } else {
+        // Just delete locally/remote if not found (consistency)
+        syncDelete(strokeId);
+        setStrokes((prev) => prev.filter((p) => p.id !== strokeId));
+      }
+    },
+    [dispatch, syncDelete],
   );
 
   const undo = useCallback(() => {
     if (undoStack.length === 0) return;
 
-    const strokeToRemove = undoStack[undoStack.length - 1];
+    const actionRaw = undoStack[undoStack.length - 1];
+    // Need to clone to avoid mutating history references?
+    // HistoryAction is immutable-ish.
 
-    // OPTIMISTIC UPDATE FIRST - immediate UI feedback
-    setStrokes((prev) => prev.filter((s) => s.id !== strokeToRemove.id));
+    const action = actionRaw;
+
+    // OPTIMISTIC UPDATE FIRST
+    if (action.type === "ADD") {
+      // Undo Add = Delete
+      setStrokes((prev) => prev.filter((s) => s.id !== action.stroke.id));
+      syncDelete(action.stroke.id);
+    } else if (action.type === "UPDATE") {
+      // Undo Update = Revert to Original
+      setStrokes((prev) =>
+        prev.map((s) =>
+          s.id === action.original.id ? { ...s, ...action.original } : s,
+        ),
+      );
+      syncUpdate(action.original.id, action.original);
+    } else if (action.type === "DELETE") {
+      // Undo Delete = Restore
+      setStrokes((prev) => [...prev, action.stroke]);
+      syncInsert(action.stroke);
+    }
+
     setUndoStack((prev) => prev.slice(0, -1));
-    setRedoStack((prev) => [...prev, strokeToRemove]);
-
-    // Background sync to Supabase (fire-and-forget, non-blocking)
-    supabase
-      .from("strokes")
-      .delete()
-      .eq("id", strokeToRemove.id)
-      .then(({ error }) => {
-        if (error) console.error("Error syncing undo:", error);
-      });
-  }, [undoStack]);
+    setRedoStack((prev) => [...prev, action]);
+  }, [undoStack, syncDelete, syncUpdate, syncInsert]);
 
   const redo = useCallback(() => {
     if (redoStack.length === 0) return;
 
-    const strokeToAdd = redoStack[redoStack.length - 1];
+    const action = redoStack[redoStack.length - 1];
 
-    // OPTIMISTIC UPDATE FIRST - immediate UI feedback
-    setStrokes((prev) => [...prev, strokeToAdd]);
+    if (action.type === "ADD") {
+      // Redo Add = Add again
+      setStrokes((prev) => [...prev, action.stroke]);
+      syncInsert(action.stroke);
+    } else if (action.type === "UPDATE") {
+      // Redo Update = Apply New
+      setStrokes((prev) =>
+        prev.map((s) => (s.id === action.new.id ? { ...s, ...action.new } : s)),
+      );
+      syncUpdate(action.new.id, action.new);
+    } else if (action.type === "DELETE") {
+      // Redo Delete = Delete again
+      setStrokes((prev) => prev.filter((s) => s.id !== action.stroke.id));
+      syncDelete(action.stroke.id);
+    }
+
     setRedoStack((prev) => prev.slice(0, -1));
-    setUndoStack((prev) => [...prev, strokeToAdd]);
-
-    // Background sync to Supabase (fire-and-forget, non-blocking)
-    supabase
-      .from("strokes")
-      .insert({
-        id: strokeToAdd.id,
-        room_id: roomId,
-        tool: strokeToAdd.tool,
-        color: strokeToAdd.color,
-        size: strokeToAdd.size,
-        points: strokeToAdd.points,
-        text: strokeToAdd.text || null,
-        timestamp: strokeToAdd.timestamp,
-        is_complete: strokeToAdd.isComplete ?? true,
-      })
-      .then(({ error }) => {
-        if (error) console.error("Error syncing redo:", error);
-      });
-  }, [redoStack, roomId]);
+    setUndoStack((prev) => [...prev, action]);
+  }, [redoStack, syncInsert, syncUpdate, syncDelete]);
 
   const canUndo = undoStack.length > 0;
   const canRedo = redoStack.length > 0;
@@ -288,13 +374,14 @@ export const useSupabaseSync = (
   return {
     strokes,
     addStroke,
-    updateStroke,
-    deleteStroke,
+    updateStroke, // Non-history update (live)
+    deleteStroke: deleteStrokeWithHistory, // History-aware delete
+    recordAction: dispatch, // Expose raw dispatch
     loading,
     undo,
     redo,
     canUndo,
-    canRedo: redoStack.length > 0,
+    canRedo,
     clearCanvas,
   };
 };
