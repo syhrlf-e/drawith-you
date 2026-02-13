@@ -4,12 +4,14 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import Header from "@/components/Header";
 import Canvas, { CanvasHandle } from "@/components/Canvas";
 import Toolbar from "@/components/Toolbar";
+import ToolSettings from "@/components/ToolSettings";
+import ProfileSidebar from "@/components/ProfileSidebar";
 import Toast, { ToastType } from "@/components/ui/Toast";
 import PeerLeftModal from "@/components/PeerLeftModal";
 import { useSupabaseSync } from "@/hooks/useSupabaseSync";
 import { useSupabasePresence } from "@/hooks/useSupabasePresence";
 import { Tool, Stroke } from "@/lib/types";
-import { debounce } from "@/lib/canvas-utils";
+import { throttle } from "@/lib/canvas-utils";
 import { supabase } from "@/lib/supabase";
 
 interface CanvasPageClientProps {
@@ -17,6 +19,22 @@ interface CanvasPageClientProps {
 }
 
 export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
+  const [tool, setTool] = useState<Tool>("pen");
+  const [color, setColor] = useState("#000000");
+  const [size, setSize] = useState(5);
+  const [feather, setFeather] = useState(0); // 0 = sharp, >0 = soft
+  const [showToolSettings, setShowToolSettings] = useState(false);
+  const [showProfileSidebar, setShowProfileSidebar] = useState(false);
+  const [backgroundColor, setBackgroundColor] = useState("#FFFFFF");
+  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
+  const canvasRef = useRef<CanvasHandle>(null);
+
+  // Ignore updates for the currently selected stroke to prevent "jumping" (server echo)
+  // We Memoize the array to prevent infinite loops in useEffect inside the hook
+  const ignoreIds = useRef<string[]>([]);
+  if (selectedStrokeId) ignoreIds.current = [selectedStrokeId];
+  else ignoreIds.current = [];
+
   const {
     strokes,
     addStroke,
@@ -26,12 +44,8 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     redo,
     canUndo,
     canRedo,
-  } = useSupabaseSync(roomId);
-  const [tool, setTool] = useState<Tool>("pen");
-  const [color, setColor] = useState("#000000");
-  const [size, setSize] = useState(5);
-  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
-  const canvasRef = useRef<CanvasHandle>(null);
+    clearCanvas: clearSupabaseCanvas,
+  } = useSupabaseSync(roomId, ignoreIds.current);
 
   // Toast State
   const [showToast, setShowToast] = useState(false);
@@ -70,10 +84,34 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
   };
 
   const handleToolChange = (newTool: Tool) => {
+    if (tool === newTool && (newTool === "pen" || newTool === "eraser")) {
+      setShowToolSettings((prev) => !prev);
+      return;
+    }
+
     setTool(newTool);
+
+    // Auto-open settings for pen/eraser initially?
+    // User said "ganggu banget", so maybe default to FALSE (closed),
+    // and let them click again to open.
+    // OR: Open it once, let them close.
+    // Let's try: Open by default, but easy to close.
+    if (newTool === "pen" || newTool === "eraser") {
+      setShowToolSettings(true);
+    } else {
+      setShowToolSettings(false);
+    }
+
+    // Smart Defaults
+    if (newTool === "eraser") {
+      setSize(30); // Default larger for eraser (wraps the icon)
+    } else if (newTool === "pen") {
+      setSize(5); // Default finer for pen
+    }
 
     // Smart Default for Text Tool
     if (newTool === "text") {
+      setSize(12); // Readable default text size
       let bgColor = "#FFFFFF";
       // Find last background stroke
       for (let i = strokes.length - 1; i >= 0; i--) {
@@ -105,22 +143,15 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     }
   }, [selectedStrokeId, strokes, color]);
 
-  // Debounced Firebase update for color changes (prevents spam)
-  const debouncedUpdateStroke = useRef(
-    debounce((strokeId: string, updates: Partial<Stroke>) => {
-      updateStroke(strokeId, updates);
-    }, 300),
-  ).current;
-
   const handleColorChange = (newColor: string) => {
     setColor(newColor);
 
-    // Live update for selected stroke with debounce
+    // Live update for selected stroke
     if (selectedStrokeId) {
       const stroke = strokes.find((s) => s.id === selectedStrokeId);
       if (stroke && (stroke.tool === "text" || stroke.tool === "pen")) {
-        // Debounced update to prevent Firebase spam during color picker drag
-        debouncedUpdateStroke(selectedStrokeId, { color: newColor });
+        // Direct call - throttling is now handled inside useSupabaseSync
+        updateStroke(selectedStrokeId, { color: newColor });
       }
     }
   };
@@ -130,24 +161,21 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
   };
 
   const handleClear = async () => {
-    // Clear local canvas
-    if (canvasRef.current) {
-      canvasRef.current.clearCanvas();
-      // Background resets automatically because strokes are cleared
-    }
-    // Clear Supabase
+    // Clear both local canvas and Supabase in one unified call
     try {
-      const { error } = await supabase
-        .from("strokes")
-        .delete()
-        .eq("room_id", roomId);
-
-      if (error) throw error;
+      if (canvasRef.current) {
+        canvasRef.current.clearCanvas();
+      }
+      clearSupabaseCanvas(); // This handles both local state and Supabase deletion
       triggerToast("Kanvas dan latar belakang berhasil direset!", "info");
     } catch (error) {
       console.error("Error clearing canvas:", error);
       triggerToast("Gagal menghapus kanvas.", "error");
     }
+  };
+
+  const handleExitRoom = () => {
+    window.location.href = "/";
   };
 
   const handleSave = () => {
@@ -161,6 +189,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
   };
 
   const handleBackgroundChange = (bgColor: string) => {
+    setBackgroundColor(bgColor);
     // OLD: canvasRef.current.setBackgroundColor(color);
     // NEW: Add as a stroke
     const newStroke: Stroke = {
@@ -198,6 +227,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
         onRedo={redo}
         canUndo={canUndo}
         canRedo={canRedo}
+        onProfileClick={() => setShowProfileSidebar(true)}
       />
 
       <Toast
@@ -220,6 +250,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
           tool={tool}
           color={color}
           size={size}
+          feather={feather}
           initialStrokes={strokes}
           onStrokeComplete={handleStrokeComplete}
           onStrokeUpdate={updateStroke}
@@ -239,6 +270,31 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
         onClear={handleClear}
         onSave={handleSave}
         onBackgroundChange={handleBackgroundChange}
+        onProfileClick={() => setShowProfileSidebar(true)}
+      />
+
+      {showToolSettings && (
+        <ToolSettings
+          tool={tool}
+          size={size}
+          feather={feather}
+          onSizeChange={setSize}
+          onFeatherChange={setFeather}
+          onClose={() => setShowToolSettings(false)}
+        />
+      )}
+
+      <ProfileSidebar
+        isOpen={showProfileSidebar}
+        onClose={() => setShowProfileSidebar(false)}
+        userName={userName}
+        userColor={identityColor}
+        backgroundColor={backgroundColor}
+        roomId={roomId}
+        onSave={handleSave}
+        onClear={handleClear}
+        onBackgroundChange={handleBackgroundChange}
+        onExitRoom={handleExitRoom}
       />
     </main>
   );

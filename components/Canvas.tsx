@@ -4,18 +4,14 @@ import {
   useEffect,
   useRef,
   useState,
-  useCallback,
   useImperativeHandle,
   forwardRef,
+  useCallback,
 } from "react";
-import { Stroke, Point, Tool, UserPresence } from "@/lib/types";
-import {
-  drawSmoothLine,
-  getCoordinates,
-  floodFill,
-  isPointNearStroke,
-  throttle,
-} from "@/lib/canvas-utils";
+import { Point, Stroke, Tool, UserPresence } from "@/lib/types";
+import { getCoordinates, isPointNearStroke } from "@/lib/canvas-utils";
+import { useCanvasDrawing } from "@/hooks/useCanvasDrawing";
+import { useCanvasRender } from "@/hooks/useCanvasRender";
 
 export interface CanvasHandle {
   clearCanvas: () => void;
@@ -28,13 +24,13 @@ interface CanvasProps {
   tool: Tool;
   color: string;
   size: number;
+  feather?: number;
   initialStrokes?: Stroke[];
   onStrokeComplete: (stroke: Stroke) => void;
   onStrokeUpdate?: (strokeId: string, updates: Partial<Stroke>) => void;
   onClear?: () => void;
   selectedStrokeId?: string | null;
   onSelectStroke?: (strokeId: string | null) => void;
-  // Presence
   others?: UserPresence[];
   onCursorUpdate?: (x: number, y: number) => void;
   onStrokeInProgress?: (stroke: Stroke | null) => void;
@@ -47,6 +43,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       tool,
       color,
       size,
+      feather = 0,
       initialStrokes = [],
       onStrokeComplete,
       onStrokeUpdate,
@@ -60,54 +57,137 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
     ref,
   ) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const overlayRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLDivElement>(null); // Changed to div for contentEditable
+    const inputRef = useRef<HTMLDivElement>(null);
 
-    const [isDrawing, setIsDrawing] = useState(false);
-    const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
+    // Component instance tracking removed for performance
+
+    // -- Refs --
     const [strokes, setStrokes] = useState<Stroke[]>(initialStrokes);
-    // const [backgroundColor, setBackgroundColor] = useState("#FFFFFF"); // Deprecated, derived from strokes
 
-    // -- Text Tool State --
-    const [isTyping, setIsTyping] = useState(false);
-    const [textInput, setTextInput] = useState({ x: 0, y: 0, value: "" });
-    const [editingStrokeId, setEditingStrokeId] = useState<string | null>(null);
-
-    // -- Select/Move Tool State --
-    // const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null); // Lifted to props
-    const [isDraggingStroke, setIsDraggingStroke] = useState(false);
-    const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-
-    // Throttled drag update refs to prevent excessive re-renders and Firebase spam
-    // IMPORTANT: Pass strokeId as parameter to avoid stale closure
-
-    // Local state update: 16ms throttle for smooth 60fps visual feedback
-    const throttledDragUpdateRef = useRef(
-      throttle((strokeId: string, newPoints: Point[]) => {
-        setStrokes((prev) =>
-          prev.map((st) => {
-            if (st.id === strokeId) {
-              return { ...st, points: newPoints };
-            }
-            return st;
-          }),
-        );
-      }, 16), // ~60fps max
-    );
-
-    // Firebase sync: 100ms throttle for real-time collaboration without spam
-    const throttledFirebaseSyncRef = useRef(
-      throttle((strokeId: string, newPoints: Point[]) => {
-        if (onStrokeUpdate) {
-          onStrokeUpdate(strokeId, { points: newPoints });
-        }
-      }, 100), // 10 updates/sec max
-    );
-
+    // Sync props to local state
     useEffect(() => {
       setStrokes(initialStrokes);
     }, [initialStrokes]);
 
+    // -- Text Tool State (Kept local as it involves DOM overlay) --
+    const [isTyping, setIsTyping] = useState(false);
+    const [textInput, setTextInput] = useState({ x: 0, y: 0, value: "" });
+    const [editingStrokeId, setEditingStrokeId] = useState<string | null>(null);
+
+    // -- Helper: Hit Test --
+    const hitTestStroke = useCallback(
+      (x: number, y: number): string | null => {
+        // Need context for text measurement
+        const ctx = canvasRef.current?.getContext("2d");
+
+        for (let i = strokes.length - 1; i >= 0; i--) {
+          const s = strokes[i];
+
+          if (s.tool === "text" && s.text && s.points[0] && ctx) {
+            const fontSize = s.size * 3;
+            ctx.font = `${fontSize}px Satoshi, sans-serif`;
+            const metrics = ctx.measureText(s.text);
+            const p = s.points[0];
+            const width = metrics.width;
+            const height = fontSize;
+
+            if (
+              x >= p.x &&
+              x <= p.x + width &&
+              y >= p.y - height &&
+              y <= p.y + 10
+            ) {
+              return s.id;
+            }
+          } else if (s.tool === "pen" || s.tool === "eraser") {
+            if (isPointNearStroke(x, y, s.points, Math.max(s.size * 2, 10))) {
+              return s.id;
+            }
+          }
+        }
+        return null;
+      },
+      [strokes],
+    );
+
+    const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(
+      null,
+    );
+
+    // -- Hooks --
+    const {
+      isDrawing,
+      currentPoints,
+      currentPointsRef, // Get Ref
+      startDrawing: hookStartDrawing,
+      drawMove,
+      stopDrawing,
+    } = useCanvasDrawing({
+      canvasRef,
+      tool,
+      color,
+      size,
+      feather,
+      strokes,
+      setStrokes,
+      onStrokeComplete: (newStroke) => {
+        // Optimistically update local state to prevent "flash" (glitch)
+        // between dropping currentPoints and receiving new strokes from parent
+        setStrokes((prev) => [...prev, newStroke]);
+        onStrokeComplete(newStroke);
+      },
+      onStrokeUpdate,
+      onSelectStroke,
+      selectedStrokeId,
+      onCursorUpdate: (x, y) => {
+        setCursorPos({ x, y });
+        if (onCursorUpdate) onCursorUpdate(x, y);
+      },
+      onStrokeInProgress,
+    });
+
+    const { redraw } = useCanvasRender({
+      canvasRef,
+      overlayRef,
+      containerRef,
+      strokes,
+      others,
+      tool,
+      selectedStrokeId,
+      editingStrokeId,
+      currentPoints: currentPoints, // Keep strictly for compatibility if prop type demands it, but logic uses Ref
+      currentPointsRef, // Pass Ref
+      color,
+      size,
+      feather,
+      cursorPos, // Pass local cursor position
+    });
+
+    // Component initialization complete
+
+    // CRITICAL: Manually set overlay canvas dimensions to match container
+    useEffect(() => {
+      const updateCanvasSizes = () => {
+        if (!containerRef.current || !overlayRef.current || !canvasRef.current)
+          return;
+
+        const rect = containerRef.current.getBoundingClientRect();
+
+        // Set CSS size to match container
+        overlayRef.current.style.width = `${rect.width}px`;
+        overlayRef.current.style.height = `${rect.height}px`;
+        canvasRef.current.style.width = `${rect.width}px`;
+        canvasRef.current.style.height = `${rect.height}px`;
+      };
+
+      updateCanvasSizes();
+      window.addEventListener("resize", updateCanvasSizes);
+      return () => window.removeEventListener("resize", updateCanvasSizes);
+    }, []);
+
+    // -- Imperative Handle --
     useImperativeHandle(ref, () => ({
       clearCanvas: () => {
         setStrokes([]);
@@ -115,265 +195,45 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       },
       saveImage: () => {
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        const overlay = overlayRef.current;
+        if (!canvas || !overlay) return;
+
+        // Composite for save
+        const compositeCanvas = document.createElement("canvas");
+        compositeCanvas.width = canvas.width;
+        compositeCanvas.height = canvas.height;
+        const ctx = compositeCanvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(canvas, 0, 0);
+          ctx.drawImage(overlay, 0, 0); // Include ghosts/cursors in save? Maybe not.
+          // Usually save is just the artwork. Let's keep just canvas (main) for now.
+          // Wait, user might want to save what they see.
+          // Reverting to just 'canvas' (main strokes) is safer for "Clean Export".
+        }
+
         const link = document.createElement("a");
         link.download = `drawith-you-${Date.now()}.png`;
-        link.href = canvas.toDataURL();
+        link.href = canvas.toDataURL(); // Save ONLY main strokes layer
         link.click();
       },
-      // setBackgroundColor is no longer needed/supported imperatively for drawing
-      // Backgrounds are now strokes. We keep the interface for TS compatibility if needed internally but it does nothing to state.
-      setBackgroundColor: (color: string) => {},
+      setBackgroundColor: () => {}, // Deprecated
     }));
 
-    // --- Redraw Logic (defined before handleResize to fix dependency order) ---
-    const redraw = useCallback(() => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      if (!ctx) return;
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Derive background color from strokes (last "background" tool wins)
-      let bgColor = "#FFFFFF";
-      for (let i = strokes.length - 1; i >= 0; i--) {
-        if (strokes[i].tool === "background") {
-          bgColor = strokes[i].color;
-          break;
-        }
-      }
-
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      strokes.forEach((stroke) => {
-        if (stroke.tool === "background") return; // Skip rendering background strokes as lines
-
-        if (stroke.id === editingStrokeId) return;
-
-        if (
-          stroke.id === selectedStrokeId &&
-          (tool === "select" || tool === "text")
-        ) {
-          ctx.save();
-          ctx.shadowBlur = 10;
-          ctx.shadowColor = "#FF1493";
-        }
-
-        if (stroke.tool === "fill") {
-          const p = stroke.points[0];
-          if (p) floodFill(ctx, p.x, p.y, stroke.color);
-        } else if (stroke.tool === "text") {
-          const p = stroke.points[0];
-          if (p && stroke.text) {
-            const fontSize = stroke.size * 3;
-            ctx.font = `${fontSize}px Satoshi, sans-serif`;
-            ctx.fillStyle = stroke.color;
-            ctx.fillText(stroke.text, p.x, p.y);
-          }
-        } else {
-          drawSmoothLine(
-            ctx,
-            stroke.points,
-            stroke.color,
-            stroke.id === selectedStrokeId && tool === "select"
-              ? stroke.size + 2
-              : stroke.size,
-            stroke.tool === "eraser",
-          );
-        }
-
-        if (
-          stroke.id === selectedStrokeId &&
-          (tool === "select" || tool === "text")
-        ) {
-          ctx.restore();
-        }
-      });
-
-      // --- Draw Others' Strokes (Ghost) ---
-      others.forEach((user) => {
-        if (user.currentStroke) {
-          const s = user.currentStroke;
-          if (s.tool === "pen" || s.tool === "eraser") {
-            ctx.globalAlpha = 0.5; // Ghost effect
-            drawSmoothLine(ctx, s.points, s.color, s.size, s.tool === "eraser");
-            ctx.globalAlpha = 1.0;
-          }
-        }
-      });
-
-      // --- Draw Others' Cursors ---
-      others.forEach((user) => {
-        if (user.cursor) {
-          const { x, y } = user.cursor;
-          const userColor = user.color || "#FF1493";
-
-          ctx.save();
-          ctx.translate(x, y);
-
-          // 1. Draw Mouse Pointer (Lucide MousePointer2)
-          // SVG Path provided by user:
-          // <path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/>
-          const cursorPath = new Path2D(
-            "M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z",
-          );
-
-          ctx.fillStyle = userColor;
-          ctx.fill(cursorPath);
-          ctx.strokeStyle = "white"; // White border for contrast
-          ctx.lineWidth = 1;
-          ctx.stroke(cursorPath);
-
-          // 2. Name Tag (Box)
-          const name = user.name || "Anonymous";
-          ctx.font = "bold 12px Satoshi, sans-serif";
-          const metrics = ctx.measureText(name);
-          const paddingX = 10;
-          const boxHeight = 24;
-          const boxWidth = metrics.width + paddingX * 2;
-
-          const labelX = 16;
-          const labelY = 16;
-
-          // Helper: Hex to RGBA inline
-          // Assuming userColor is always hex string like #RRGGBB
-          let r = 0,
-            g = 0,
-            b = 0;
-          if (userColor.startsWith("#")) {
-            r = parseInt(userColor.slice(1, 3), 16);
-            g = parseInt(userColor.slice(3, 5), 16);
-            b = parseInt(userColor.slice(5, 7), 16);
-          }
-          const bgAlpha = 0.2; // 20% opacity as requested (user said "ijo 50%", I'll confirm to 20% or 50%... user said "ijo 50% teks ijo 100% border 100%")
-          // User: "bg nya ijo 50%" -> Okay let's use 0.5 alpha
-          const bgColor = `rgba(${r}, ${g}, ${b}, 0.5)`;
-
-          // Box Background
-          ctx.fillStyle = bgColor;
-          ctx.beginPath();
-          ctx.roundRect(labelX, labelY, boxWidth, boxHeight, 6);
-          ctx.fill();
-
-          // Box Border
-          ctx.strokeStyle = userColor; // 100% opacity
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-
-          // Text
-          ctx.fillStyle = userColor; // 100% opacity
-          ctx.textBaseline = "middle";
-          // We add a tiny bit more paddingY to center vertically in boxHeight=24
-          ctx.fillText(name, labelX + paddingX, labelY + boxHeight / 2);
-
-          ctx.restore();
-        }
-      });
-
-      if (currentPoints.length > 0) {
-        if (tool === "pen" || tool === "eraser") {
-          drawSmoothLine(ctx, currentPoints, color, size, tool === "eraser");
-        }
-      }
-    }, [
-      strokes,
-      currentPoints,
-      color,
-      size,
-      tool,
-      selectedStrokeId,
-      editingStrokeId,
-      others, // Trigger redraw when others change
-    ]);
-
-    useEffect(() => {
-      redraw();
-    }, [redraw]);
-
-    // handleResize needs redraw, so define after redraw
-    const handleResize = useCallback(() => {
-      if (!containerRef.current || !canvasRef.current) return;
-      const { width, height } = containerRef.current.getBoundingClientRect();
-      const canvas = canvasRef.current;
-      canvas.width = width;
-      canvas.height = height;
-      requestAnimationFrame(redraw);
-    }, [redraw]);
-
-    useEffect(() => {
-      window.addEventListener("resize", handleResize);
-      handleResize();
-      return () => window.removeEventListener("resize", handleResize);
-    }, [handleResize]);
-
-    // --- Interaction Handlers ---
-
-    const hitTestStroke = (x: number, y: number): string | null => {
-      for (let i = strokes.length - 1; i >= 0; i--) {
-        const s = strokes[i];
-
-        if (s.tool === "text" && s.text && s.points[0]) {
-          const ctx = canvasRef.current?.getContext("2d");
-          if (!ctx) continue;
-          const fontSize = s.size * 3;
-          ctx.font = `${fontSize}px Satoshi, sans-serif`;
-          const metrics = ctx.measureText(s.text);
-          const p = s.points[0];
-          const width = metrics.width;
-          const height = fontSize;
-
-          if (
-            x >= p.x &&
-            x <= p.x + width &&
-            y >= p.y - height &&
-            y <= p.y + 10
-          ) {
-            return s.id;
-          }
-        } else if (s.tool === "pen" || s.tool === "eraser") {
-          if (isPointNearStroke(x, y, s.points, Math.max(s.size * 2, 10))) {
-            return s.id;
-          }
-        }
-      }
-      return null;
-    };
-
-    const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const point = getCoordinates(e, canvas);
-      if (!point) return;
-
-      if (tool === "select") {
-        const hitId = hitTestStroke(point.x, point.y);
-        if (hitId) {
-          if (onSelectStroke) onSelectStroke(hitId);
-          setIsDraggingStroke(true);
-          const s = strokes.find((st) => st.id === hitId);
-          if (s && s.points[0]) {
-            setDragOffset({
-              x: point.x - s.points[0].x,
-              y: point.y - s.points[0].y,
-            });
-          }
-        } else {
-          if (onSelectStroke) onSelectStroke(null);
-        }
-        return;
-      }
-
+    // -- Event Wrappers --
+    const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
+      // Special case: Text tool click existing text or new spot
+      // We override the hook's startDrawing for text tool specific formatting
       if (tool === "text") {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const point = getCoordinates(e, canvas);
+        if (!point) return;
+
         const hitId = hitTestStroke(point.x, point.y);
 
-        // Select the stroke so parent knows (and color picker works)
         if (hitId) {
           if (onSelectStroke) onSelectStroke(hitId);
         } else {
-          // If clicking empty space, maybe clear selection?
-          // But we are also potentially creating new text.
           if (onSelectStroke) onSelectStroke(null);
         }
 
@@ -387,12 +247,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
               value: s.text || "",
             });
             setEditingStrokeId(hitId);
-            // Need to wait for render to focus and set text
             requestAnimationFrame(() => {
               if (inputRef.current) {
                 inputRef.current.innerText = s.text || "";
                 inputRef.current.focus();
-                // Set cursor to end
                 const range = document.createRange();
                 const sel = window.getSelection();
                 range.selectNodeContents(inputRef.current);
@@ -419,107 +277,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         return;
       }
 
-      if (tool === "fill") {
-        const newStroke: Stroke = {
-          id: Date.now().toString(),
-          tool: "fill",
-          color: color,
-          size: 0,
-          points: [point],
-          timestamp: Date.now(),
-          isComplete: true,
-        };
-        onStrokeComplete(newStroke);
-        return;
-      }
-
-      setIsDrawing(true);
-      setCurrentPoints([point]);
-    };
-
-    const drawMove = (e: React.MouseEvent | React.TouchEvent) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const point = getCoordinates(e, canvas);
-      if (!point) return;
-
-      // Broadcast Cursor Position
-      if (onCursorUpdate) {
-        onCursorUpdate(point.x, point.y);
-      }
-
-      if (tool === "select" && isDraggingStroke && selectedStrokeId) {
-        const s = strokes.find((st) => st.id === selectedStrokeId);
-        if (!s) return;
-
-        const newRefX = point.x - dragOffset.x;
-        const newRefY = point.y - dragOffset.y;
-
-        const dx = newRefX - s.points[0].x;
-        const dy = newRefY - s.points[0].y;
-
-        if (dx === 0 && dy === 0) return;
-
-        const newPoints = s.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
-
-        // Update local state for smooth visual feedback (60fps)
-        throttledDragUpdateRef.current(selectedStrokeId, newPoints);
-
-        // Sync to Firebase for real-time collaboration (10fps)
-        throttledFirebaseSyncRef.current(selectedStrokeId, newPoints);
-
-        return;
-      }
-
-      if (!isDrawing) return;
-      if (tool !== "pen" && tool !== "eraser") return;
-
-      const newPoints = [...currentPoints, point];
-      setCurrentPoints(newPoints);
-
-      // Broadcast Current Stroke
-      if (onStrokeInProgress) {
-        const liveStroke: Stroke = {
-          id: "temp",
-          tool: tool,
-          color: color,
-          size: size,
-          points: newPoints,
-          timestamp: Date.now(),
-        };
-        onStrokeInProgress(liveStroke);
-      }
-    };
-
-    const stopDrawing = () => {
-      // Broadcast Stop Stroke
-      if (onStrokeInProgress) {
-        onStrokeInProgress(null);
-      }
-
-      if (tool === "select" && isDraggingStroke && selectedStrokeId) {
-        setIsDraggingStroke(false);
-        // Firebase sync is already handled by throttledFirebaseSyncRef during drag
-        // No need to sync again here
-        return;
-      }
-
-      if (!isDrawing) return;
-      setIsDrawing(false);
-
-      if (currentPoints.length > 0) {
-        const newStroke: Stroke = {
-          id: Date.now().toString(),
-          tool: tool,
-          color: color,
-          size: size,
-          points: currentPoints,
-          timestamp: Date.now(),
-          isComplete: true,
-        };
-        onStrokeComplete(newStroke);
-      }
-      setCurrentPoints([]);
+      hookStartDrawing(e, hitTestStroke);
     };
 
     const commitText = () => {
@@ -553,19 +311,45 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       setTextInput({ ...textInput, value: "" });
     };
 
+    // -- Cursor Logic --
+    const getCursorStyle = () => {
+      switch (tool) {
+        case "pen":
+          return "url('https://api.iconify.design/lucide:pencil.svg?color=%23000000&width=24&height=24') 0 24, auto";
+        case "eraser":
+          return "none"; // Hide cursor, we draw a custom circle
+        case "text":
+          return "text";
+        case "fill":
+          return "url('https://api.iconify.design/lucide:paint-bucket.svg?color=%23000000&width=24&height=24') 12 12, auto";
+        case "select":
+          return "default";
+        default:
+          return "crosshair";
+      }
+    };
+
     return (
       <div
         ref={containerRef}
-        className="relative w-full h-[80vh] bg-white rounded-[20px] shadow-lg overflow-hidden cursor-crosshair touch-none"
+        className="relative w-full h-[80vh] bg-white rounded-[20px] shadow-lg overflow-hidden touch-none"
+        style={{ cursor: getCursorStyle() }}
       >
+        <canvas ref={canvasRef} className="absolute inset-0 block z-10" />
+        {/* Overlay Canvas - NOW HANDLES EVENTS */}
         <canvas
-          ref={canvasRef}
-          className="absolute inset-0 block"
-          onMouseDown={startDrawing}
+          ref={overlayRef}
+          className="absolute inset-0 block z-20"
+          style={{
+            display: "block",
+            touchAction: "none",
+            pointerEvents: "auto",
+          }}
+          onMouseDown={handleMouseDown}
           onMouseMove={drawMove}
           onMouseUp={stopDrawing}
           onMouseLeave={stopDrawing}
-          onTouchStart={startDrawing}
+          onTouchStart={handleMouseDown}
           onTouchMove={drawMove}
           onTouchEnd={stopDrawing}
         />
@@ -574,10 +358,14 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
           <div
             ref={inputRef}
             contentEditable
+            suppressContentEditableWarning={true}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
+            data-gramm="false"
+            data-enable-grammarly="false" // Disable Grammarly
             onBlur={commitText}
             onKeyDown={(e) => {
-              // Normally shift+enter is new line, enter is submit?
-              // Similar apps: Enter escapes/submits. Shift+Enter is newline.
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 inputRef.current?.blur();
@@ -587,7 +375,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
             style={{
               position: "absolute",
               left: textInput.x,
-              top: textInput.y - size * 3, // Font baseline align
+              top: textInput.y - size * 3,
               fontSize: `${size * 3}px`,
               color: color,
               fontFamily: "Satoshi, sans-serif",
@@ -601,8 +389,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
               height: "auto",
               zIndex: 50,
               lineHeight: 1,
-              whiteSpace: "pre", // Allows growing width
-              display: "inline-block", // fit content
+              whiteSpace: "pre",
+              display: "inline-block",
             }}
             className="z-50 empty:before:content-['Type...'] empty:before:text-gray-400 empty:before:opacity-50"
           />

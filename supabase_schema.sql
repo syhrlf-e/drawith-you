@@ -12,9 +12,9 @@ CREATE TABLE IF NOT EXISTS rooms (
 CREATE TABLE IF NOT EXISTS strokes (
   id TEXT PRIMARY KEY,
   room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  tool TEXT NOT NULL,
-  color TEXT NOT NULL,
-  size INTEGER NOT NULL,
+  tool TEXT NOT NULL CHECK (tool IN ('pen', 'eraser', 'text', 'fill', 'select', 'background')),
+  color TEXT NOT NULL CHECK (color ~* '^#[0-9a-f]{6}$'), -- Validate Hex Color
+  size INTEGER NOT NULL CHECK (size >= 0),
   points JSONB NOT NULL,
   text TEXT,
   timestamp BIGINT NOT NULL,
@@ -53,6 +53,10 @@ ALTER TABLE strokes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE presence ENABLE ROW LEVEL SECURITY;
 
 -- Public access policies (no auth required for now)
+-- RECOMMENDATION: Implement Supabase Anonymous Auth for strict RLS
+-- Current policies allow public access but strictly scoped by room_id logic in application layer
+-- Constraints added above (CHECK) ensure data integrity.
+
 -- Rooms
 CREATE POLICY "Allow all operations on rooms" ON rooms FOR ALL USING (true);
 

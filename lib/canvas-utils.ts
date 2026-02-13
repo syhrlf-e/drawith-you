@@ -33,8 +33,10 @@ export const drawSmoothLine = (
   color: string,
   size: number,
   isEraser: boolean = false,
+  feather: number = 0,
+  source: string = "unknown", // Add source parameter
 ) => {
-  if (points.length < 2) return;
+  if (points.length === 0) return;
 
   // Save context state
   ctx.save();
@@ -44,11 +46,26 @@ export const drawSmoothLine = (
   } else {
     ctx.globalCompositeOperation = "source-over";
     ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    if (feather > 0) {
+      ctx.shadowBlur = feather;
+      ctx.shadowColor = color;
+    }
   }
 
   ctx.lineWidth = size;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+
+  // Handle single point (draw a dot)
+  if (points.length === 1) {
+    ctx.beginPath();
+    ctx.arc(points[0].x, points[0].y, size / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
 
@@ -155,7 +172,9 @@ const matchColor = (
   b: number,
   a: number,
 ) => {
-  const tolerance = 10;
+  // Increased tolerance to handle anti-aliasing at stroke edges
+  // This prevents white gaps when filling shapes drawn with pen tool
+  const tolerance = 35;
   return (
     Math.abs(data[index] - r) <= tolerance &&
     Math.abs(data[index + 1] - g) <= tolerance &&

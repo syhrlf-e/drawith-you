@@ -14,6 +14,7 @@ import {
   LogOut,
   MousePointer2,
   Pipette,
+  User,
 } from "lucide-react";
 import { HexColorPicker } from "react-colorful";
 
@@ -29,6 +30,7 @@ interface ToolbarProps {
   onClear?: () => void;
   onSave?: () => void;
   onBackgroundChange?: (color: string) => void;
+  onProfileClick?: () => void; // New: triggers profile sidebar
 }
 
 declare global {
@@ -45,6 +47,7 @@ export default function Toolbar({
   onClear,
   onSave,
   onBackgroundChange,
+  onProfileClick,
 }: ToolbarProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
@@ -268,7 +271,7 @@ export default function Toolbar({
         </div>
       )}
 
-      {/* Settings Menu Modal */}
+      {/* Settings Menu Modal - Empty (all options moved to Profile Sidebar) */}
       {isMenuOpen && (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/20 backdrop-blur-[2px]"
@@ -288,54 +291,8 @@ export default function Toolbar({
               </button>
             </div>
 
-            <div className="space-y-4">
-              {/* Save Image */}
-              <button
-                className="w-full py-3 px-4 bg-gray-50 hover:bg-gray-100 rounded-xl flex items-center gap-3 text-gray-700 font-medium transition-colors"
-                onClick={() => setAlertType("save")}
-              >
-                <Download className="w-5 h-5 text-pink-500" />
-                Simpan Gambar
-              </button>
-
-              {/* Clear Canvas */}
-              <button
-                className="w-full py-3 px-4 bg-gray-50 hover:bg-red-50 rounded-xl flex items-center gap-3 text-red-600 font-medium transition-colors"
-                onClick={() => setAlertType("clear")}
-              >
-                <Trash2 className="w-5 h-5 text-red-500" />
-                Hapus Kanvas
-              </button>
-
-              {/* Background Options */}
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-gray-500 flex items-center gap-2">
-                  <Palette className="w-4 h-4" />
-                  Latar Belakang
-                </label>
-                <div className="flex gap-2 flex-wrap">
-                  {backgroundPalette.map((color) => (
-                    <button
-                      key={color}
-                      className="w-8 h-8 rounded-full border border-gray-200 shadow-sm transition-transform hover:scale-110"
-                      style={{ backgroundColor: color }}
-                      onClick={() => {
-                        if (onBackgroundChange) onBackgroundChange(color);
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div className="h-px bg-gray-100 my-2" />
-
-              <button
-                className="w-full py-3 px-4 hover:bg-gray-50 rounded-xl flex items-center justify-center gap-2 text-sm text-gray-500 transition-colors"
-                onClick={() => setAlertType("exit")}
-              >
-                <LogOut className="w-4 h-4" />
-                Keluar Room
-              </button>
+            <div className="text-center py-8 text-gray-400">
+              <p className="text-sm">Menu kosong</p>
             </div>
           </div>
         </div>

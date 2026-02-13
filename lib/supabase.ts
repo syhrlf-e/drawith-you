@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { Point, Stroke } from "./types";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -43,7 +44,7 @@ export interface Database {
           tool: string;
           color: string;
           size: number;
-          points: any; // JSONB
+          points: Point[]; // JSONB -> Point[]
           text: string | null;
           timestamp: number;
           is_complete: boolean;
@@ -56,7 +57,7 @@ export interface Database {
           tool: string;
           color: string;
           size: number;
-          points: any;
+          points: Point[];
           text?: string | null;
           timestamp: number;
           is_complete?: boolean;
@@ -69,7 +70,7 @@ export interface Database {
           tool?: string;
           color?: string;
           size?: number;
-          points?: any;
+          points?: Point[];
           text?: string | null;
           timestamp?: number;
           is_complete?: boolean;
@@ -84,8 +85,8 @@ export interface Database {
           user_id: string;
           name: string;
           color: string;
-          cursor: any | null;
-          current_stroke: any | null;
+          cursor: Point | null;
+          current_stroke: Stroke | null;
           last_active: number;
           created_at: string;
           updated_at: string;
@@ -96,8 +97,8 @@ export interface Database {
           user_id: string;
           name: string;
           color: string;
-          cursor?: any | null;
-          current_stroke?: any | null;
+          cursor?: Point | null;
+          current_stroke?: Stroke | null;
           last_active: number;
           created_at?: string;
           updated_at?: string;
@@ -108,8 +109,8 @@ export interface Database {
           user_id?: string;
           name?: string;
           color?: string;
-          cursor?: any | null;
-          current_stroke?: any | null;
+          cursor?: Point | null;
+          current_stroke?: Stroke | null;
           last_active?: number;
           created_at?: string;
           updated_at?: string;

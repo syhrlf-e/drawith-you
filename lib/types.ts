@@ -10,6 +10,7 @@ export interface Stroke {
   tool: Tool;
   color: string;
   size: number;
+  feather?: number; // Softness/Blur radius
   points: Point[];
   timestamp: number;
   text?: string; // For text tool

@@ -31,29 +31,31 @@ export const useSupabasePresence = (
     currentStroke: null,
   });
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const roomReadyRef = useRef(false); // Track if room is ready for presence updates
 
-  // Throttled update to Supabase
+  // Throttled update to Supabase (non-blocking fire-and-forget)
   const updatePresence = useRef(
-    throttle(async (presence: UserPresence) => {
+    throttle((presence: UserPresence) => {
       if (!roomId || !userId) return;
-      try {
-        await supabase.from("presence").upsert(
-          {
-            id: userId,
-            room_id: roomId,
-            user_id: userId,
-            name: presence.name,
-            color: presence.color,
-            cursor: presence.cursor,
-            current_stroke: presence.currentStroke,
-            last_active: presence.lastActive,
-          },
-          { onConflict: "id" },
-        );
-      } catch (error) {
-        console.error("Presence update failed", error);
-      }
-    }, 50), // Update max every 50ms (20fps)
+      if (!roomReadyRef.current) return; // Don't update until room is confirmed ready
+
+      // Fire-and-forget - don't wait for response to keep cursor smooth
+      supabase
+        .from("presence")
+        .upsert({
+          id: userId,
+          room_id: roomId,
+          user_id: userId,
+          name: presence.name,
+          color: presence.color,
+          cursor: presence.cursor,
+          current_stroke: presence.currentStroke,
+          last_active: presence.lastActive,
+        })
+        .then(({ error }) => {
+          if (error) console.error("Presence update failed", error);
+        });
+    }, 100), // Update max every 100ms (10fps)
   ).current;
 
   // Initial setup and real-time subscription
@@ -61,23 +63,58 @@ export const useSupabasePresence = (
     if (!roomId || !userId) return;
 
     const initPresence = async () => {
-      // Ensure room exists
-      await supabase.from("rooms").upsert({ id: roomId }, { onConflict: "id" });
+      // 1. Ensure room exists (Wait for useSupabaseSync to create it)
+      let roomExists = false;
+      let attempts = 0;
+      const maxAttempts = 10; // Increase attempts
+
+      while (!roomExists && attempts < maxAttempts) {
+        // Check if room exists
+        const { data: room, error } = await supabase
+          .from("rooms")
+          .select("id")
+          .eq("id", roomId)
+          .single();
+
+        if (room) {
+          roomExists = true;
+        } else {
+          // Wait longer between checks
+          await new Promise((r) => setTimeout(r, 1000));
+          attempts++;
+        }
+      }
+
+      if (!roomExists) {
+        // Fallback: Try to create it only if waiting failed (last resort)
+        const { error: createError } = await supabase
+          .from("rooms")
+          .upsert({ id: roomId })
+          .select()
+          .single();
+
+        if (!createError) {
+          roomExists = true;
+        } else {
+          console.error(
+            "Failed to join room: Room not found and creation failed",
+            createError,
+          );
+          return;
+        }
+      }
 
       // Set initial presence
-      await supabase.from("presence").upsert(
-        {
-          id: userId,
-          room_id: roomId,
-          user_id: userId,
-          name: myPresenceRef.current.name,
-          color: myPresenceRef.current.color,
-          cursor: null,
-          current_stroke: null,
-          last_active: Date.now(),
-        },
-        { onConflict: "id" },
-      );
+      await supabase.from("presence").upsert({
+        id: userId,
+        room_id: roomId,
+        user_id: userId,
+        name: myPresenceRef.current.name,
+        color: myPresenceRef.current.color,
+        cursor: null,
+        current_stroke: null,
+        last_active: Date.now(),
+      });
 
       // Fetch initial presence
       const { data } = await supabase
@@ -97,6 +134,9 @@ export const useSupabasePresence = (
         }));
         setOthers(presenceList);
       }
+
+      // Mark room as ready for presence updates
+      roomReadyRef.current = true;
     };
 
     initPresence();
@@ -156,6 +196,7 @@ export const useSupabasePresence = (
 
     // Cleanup on unmount
     return () => {
+      roomReadyRef.current = false; // Reset room ready state
       channel.unsubscribe();
       // Remove presence from database
       supabase.from("presence").delete().eq("id", userId).then();
