@@ -323,7 +323,8 @@ export const useCanvasRender = ({
     }
 
     // Peer Cursors
-    others.forEach((user) => {
+    const peerUsers = othersRef.current;
+    peerUsers.forEach((user) => {
       if (user.cursor) {
         // ... (Keep existing peer cursor logic)
         const { x, y } = user.cursor;
@@ -377,16 +378,7 @@ export const useCanvasRender = ({
         ctx.restore();
       }
     });
-  }, [
-    overlayRef,
-    others,
-    currentPointsRef,
-    tool,
-    color,
-    size,
-    feather,
-    cursorPos,
-  ]);
+  }, [overlayRef, currentPointsRef, tool, color, size, feather, cursorPos]); // Removed 'others' - using othersRef instead
 
   // Main Draw Effect (Strokes changed)
   useEffect(() => {

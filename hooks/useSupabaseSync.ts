@@ -77,6 +77,10 @@ export const useSupabaseSync = (
         },
         (payload) => {
           if (payload.eventType === "INSERT") {
+            console.log(
+              `[Sync] Received INSERT event for stroke:`,
+              payload.new.id,
+            );
             const newStroke: Stroke = {
               id: payload.new.id,
               tool: payload.new.tool as Stroke["tool"],
@@ -91,8 +95,12 @@ export const useSupabaseSync = (
             setStrokes((prev) => {
               // Check if stroke already exists
               if (prev.some((s) => s.id === newStroke.id)) {
+                console.log(
+                  `[Sync] Stroke ${newStroke.id} already exists, skipping`,
+                );
                 return prev;
               }
+              console.log(`[Sync] Adding stroke ${newStroke.id} to state`);
               return [...prev, newStroke];
             });
           } else if (payload.eventType === "UPDATE") {
@@ -117,11 +125,28 @@ export const useSupabaseSync = (
               prev.map((s) => (s.id === updatedStroke.id ? updatedStroke : s)),
             );
           } else if (payload.eventType === "DELETE") {
-            setStrokes((prev) => prev.filter((s) => s.id !== payload.old.id));
+            console.log(
+              `[Sync] Received DELETE event for stroke:`,
+              payload.old.id,
+            );
+            setStrokes((prev) => {
+              const filtered = prev.filter((s) => s.id !== payload.old.id);
+              console.log(
+                `[Sync] After DELETE - strokes count: ${prev.length} -> ${filtered.length}`,
+              );
+              return filtered;
+            });
           }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log(`[Sync] Subscription status for room ${roomId}:`, status);
+        if (status === "SUBSCRIBED") {
+          console.log(`[Sync] ✅ Successfully subscribed to room ${roomId}`);
+        } else if (status === "CHANNEL_ERROR") {
+          console.error(`[Sync] ❌ Channel error for room ${roomId}`);
+        }
+      });
 
     channelRef.current = channel;
 
@@ -136,6 +161,7 @@ export const useSupabaseSync = (
   // Core Sync Helpers (Network Only)
   const syncInsert = useCallback(
     (stroke: Stroke) => {
+      console.log(`[Sync] Inserting stroke to DB:`, stroke.id);
       supabase
         .from("strokes")
         .insert({
@@ -150,7 +176,11 @@ export const useSupabaseSync = (
           is_complete: stroke.isComplete ?? true,
         })
         .then(({ error }) => {
-          if (error) console.error("Error syncing stroke:", error);
+          if (error) {
+            console.error(`[Sync] INSERT error for ${stroke.id}:`, error);
+          } else {
+            console.log(`[Sync] INSERT successful for ${stroke.id}`);
+          }
         });
     },
     [roomId],
@@ -355,6 +385,66 @@ export const useSupabaseSync = (
   const canUndo = undoStack.length > 0;
   const canRedo = redoStack.length > 0;
 
+  // Atomic Eraser Batch Operation
+  const applyEraserBatch = useCallback(
+    (deletedIds: string[], newFragments: Stroke[]) => {
+      console.log(
+        `[Sync] Applying eraser batch: deleting ${deletedIds.length}, adding ${newFragments.length} fragments`,
+      );
+
+      // 1. Optimistic local update FIRST (immediate UI feedback)
+      setStrokes((prev) => {
+        const filtered = prev.filter((s) => !deletedIds.includes(s.id));
+        return [...filtered, ...newFragments];
+      });
+
+      // 2. Delete all strokes from database (parallel is OK here)
+      const deletePromises = deletedIds.map((id) =>
+        supabase
+          .from("strokes")
+          .delete()
+          .eq("id", id)
+          .then(({ error }) => {
+            if (error) {
+              console.error(`[Sync] Error deleting stroke ${id}:`, error);
+              throw error;
+            }
+            console.log(`[Sync] Deleted stroke ${id}`);
+          }),
+      );
+
+      // 3. Wait for ALL deletes to complete
+      Promise.all(deletePromises)
+        .then(() => {
+          console.log(
+            `[Sync] All deletes complete, now inserting ${newFragments.length} fragments`,
+          );
+          // 4. THEN insert fragments (sequential to ensure order)
+          newFragments.forEach((fragment) => {
+            syncInsert(fragment);
+          });
+        })
+        .catch((error) => {
+          console.error("[Sync] Eraser batch operation failed:", error);
+        });
+
+      // 5. Add to history for undo/redo
+      // For simplicity, we'll add each delete and each add as separate actions
+      // This allows granular undo, but ideally we'd have a compound action
+      deletedIds.forEach((id) => {
+        const stroke = strokesRef.current.find((s) => s.id === id);
+        if (stroke) {
+          setUndoStack((prev) => [...prev, { type: "DELETE", stroke }]);
+        }
+      });
+      newFragments.forEach((fragment) => {
+        setUndoStack((prev) => [...prev, { type: "ADD", stroke: fragment }]);
+      });
+      setRedoStack([]);
+    },
+    [syncInsert, strokesRef],
+  );
+
   const clearCanvas = useCallback(() => {
     // Clear local state first for immediate UI feedback
     setStrokes([]);
@@ -377,6 +467,7 @@ export const useSupabaseSync = (
     updateStroke, // Non-history update (live)
     deleteStroke: deleteStrokeWithHistory, // History-aware delete
     recordAction: dispatch, // Expose raw dispatch
+    applyEraserBatch, // Atomic eraser operation
     loading,
     undo,
     redo,

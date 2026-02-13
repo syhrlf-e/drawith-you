@@ -33,7 +33,6 @@ export const useSupabasePresence = (
   const channelRef = useRef<RealtimeChannel | null>(null);
 
   // 1. Initial Presence Tracking & Subscription
-  // 1. Initial Presence Tracking & Subscription
   useEffect(() => {
     if (!roomId || !userId) return;
 
@@ -87,15 +86,28 @@ export const useSupabasePresence = (
               validOthers.push(presences[0] as UserPresence);
             }
           }
+          console.log(
+            `[Presence] Sync event. Found ${validOthers.length} other users:`,
+            validOthers.map((u) => ({
+              id: u.id,
+              name: u.name,
+              color: u.color,
+            })),
+          );
           setOthers(validOthers);
         })
         .on("broadcast", { event: "cursor" }, ({ payload }) => {
           if (payload.userId === userId) return;
+          console.log(
+            `[Presence] Received cursor from ${payload.userId}:`,
+            payload,
+          );
           setOthers((prev) => {
             const existingIndex = prev.findIndex(
               (p) => p.id === payload.userId,
             );
             if (existingIndex >= 0) {
+              // User exists, update cursor
               const updated = [...prev];
               updated[existingIndex] = {
                 ...updated[existingIndex],
@@ -103,8 +115,22 @@ export const useSupabasePresence = (
                 lastActive: Date.now(),
               };
               return updated;
+            } else {
+              // User doesn't exist yet (broadcast arrived before presence sync)
+              // Create a minimal user entry
+              console.log(
+                `[Presence] Creating placeholder for ${payload.userId} (cursor arrived before sync)`,
+              );
+              const placeholderUser: UserPresence = {
+                id: payload.userId,
+                name: "Loading...", // Will be updated by next presence sync
+                color: "#999999",
+                cursor: { x: payload.x, y: payload.y },
+                lastActive: Date.now(),
+                currentStroke: null,
+              };
+              return [...prev, placeholderUser];
             }
-            return prev;
           });
         })
         .on("broadcast", { event: "stroke-start" }, ({ payload }) => {
@@ -144,6 +170,10 @@ export const useSupabasePresence = (
             `[Presence] Channel status: ${status} for room ${roomId}`,
           );
           if (status === "SUBSCRIBED") {
+            console.log(
+              `[Presence] About to track presence:`,
+              myPresenceRef.current,
+            );
             const trackStatus = await channel.track(myPresenceRef.current);
             console.log(`[Presence] Track result: ${trackStatus}`);
           }
@@ -176,6 +206,7 @@ export const useSupabasePresence = (
   const broadcastCursor = useRef(
     throttle((x: number, y: number) => {
       if (!channelRef.current) return;
+      console.log(`[Presence] Broadcasting cursor:`, { userId, x, y });
       channelRef.current.send({
         type: "broadcast",
         event: "cursor",

@@ -42,6 +42,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     clearCanvas: clearSupabaseCanvas,
     deleteStroke,
     recordAction,
+    applyEraserBatch,
   } = useSupabaseSync(roomId, ignoreIds.current);
 
   const {
@@ -76,25 +77,24 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
   ).current;
 
   // Presence & Peer Left Modal
-  const [userName, setUserName] = useState("");
+  // Initialize userName synchronously to avoid race condition with useSupabasePresence
+  const [userName, setUserName] = useState(() => {
+    if (typeof window !== "undefined") {
+      const storedName = localStorage.getItem(STORAGE_KEYS.USERNAME);
+      if (storedName) {
+        return storedName;
+      } else {
+        const newName = generateRandomName();
+        localStorage.setItem(STORAGE_KEYS.USERNAME, newName);
+        return newName;
+      }
+    }
+    return ""; // Fallback for SSR
+  });
+
   const userId = useRef(
     `user-${Math.random().toString(36).substr(2, 9)}`,
   ).current;
-
-  // Persist userName
-  useEffect(() => {
-    const storedName = localStorage.getItem(STORAGE_KEYS.USERNAME);
-    if (storedName) {
-      setUserName(storedName);
-      // We rely on the hook's useEffect to sync this now, but effective immediately:
-      // However, we can't call setMyName here because it's defined AFTER this effect.
-      // So we rely on the hook modification we just made.
-    } else {
-      const newName = generateRandomName();
-      localStorage.setItem(STORAGE_KEYS.USERNAME, newName);
-      setUserName(newName);
-    }
-  }, []);
 
   const handleUserNameChange = (newName: string) => {
     setUserName(newName);
@@ -193,14 +193,11 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
       });
 
       if (hasChanges) {
-        // Apply updates
-        // 1. Delete modified/erased strokes
-        strokesToDelete.forEach((id) => deleteStroke(id));
+        // Apply atomic eraser batch operation
+        // This ensures DELETE completes before INSERT on remote clients
+        applyEraserBatch(strokesToDelete, strokesToAdd);
 
-        // 2. Add new fragments
-        strokesToAdd.forEach((s) => addStroke(s));
-
-        // 3. Do NOT add the eraser stroke to history/canvas
+        // Do NOT add the eraser stroke to history/canvas
       }
     } else {
       // Normal stroke (Pen, Text, etc)
