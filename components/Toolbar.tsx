@@ -16,6 +16,7 @@ import {
   Pipette,
   User,
 } from "lucide-react";
+import { TOOLS, BACKGROUND_PALETTE } from "@/lib/constants";
 import { HexColorPicker } from "react-colorful";
 
 import { Tool } from "@/lib/types";
@@ -30,7 +31,8 @@ interface ToolbarProps {
   onClear?: () => void;
   onSave?: () => void;
   onBackgroundChange?: (color: string) => void;
-  onProfileClick?: () => void; // New: triggers profile sidebar
+  onProfileClick?: () => void;
+  onShowSettings?: () => void; // New prop
 }
 
 declare global {
@@ -48,6 +50,7 @@ export default function Toolbar({
   onSave,
   onBackgroundChange,
   onProfileClick,
+  onShowSettings, // New prop
 }: ToolbarProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
@@ -78,23 +81,14 @@ export default function Toolbar({
   );
 
   const tools: { id: Tool; icon: React.ElementType; label: string }[] = [
-    { id: "select", icon: MousePointer2, label: "Pilih / Pindah" },
-    { id: "pen", icon: Pen, label: "Pena" },
-    { id: "eraser", icon: Eraser, label: "Penghapus" },
-    { id: "text", icon: Type, label: "Teks" },
-    { id: "fill", icon: PaintBucket, label: "Isi Warna" },
+    { id: TOOLS.SELECT, icon: MousePointer2, label: "Pilih / Pindah" },
+    { id: TOOLS.PEN, icon: Pen, label: "Pena" },
+    { id: TOOLS.ERASER, icon: Eraser, label: "Penghapus" },
+    { id: TOOLS.TEXT, icon: Type, label: "Teks" },
+    { id: TOOLS.FILL, icon: PaintBucket, label: "Isi Warna" },
   ];
 
-  const backgroundPalette = [
-    "#FFFFFF", // White
-    "#F5F5F5", // Light Gray
-    "#FFFAF0", // Floral White
-    "#F0F8FF", // Alice Blue
-    "#FFF0F5", // Lavender Blush
-    "#FAFAFA", // Very Light Gray
-    "#E0E0E0", // Gray
-    "#000000", // Black
-  ];
+  const backgroundPalette = BACKGROUND_PALETTE;
 
   const handleConfirm = () => {
     if (alertType === "save" && onSave) {
@@ -127,14 +121,23 @@ export default function Toolbar({
           {/* Tools */}
           {tools.map((tool) => {
             const Icon = tool.icon;
-            const isActive = currentTool === tool.id;
+            const isSelected = currentTool === tool.id;
 
             return (
               <button
                 key={tool.id}
-                onClick={() => onToolChange(tool.id)}
+                onClick={() => {
+                  if (
+                    isSelected &&
+                    (tool.id === TOOLS.PEN || tool.id === TOOLS.ERASER)
+                  ) {
+                    onShowSettings?.();
+                  } else {
+                    onToolChange(tool.id);
+                  }
+                }}
                 className={`p-2 sm:p-3 rounded-full transition-all duration-200 ${
-                  isActive
+                  isSelected
                     ? "bg-pink-primary text-white shadow-lg scale-105"
                     : "text-gray-400 hover:bg-pink-50 hover:text-pink-primary"
                 }`}

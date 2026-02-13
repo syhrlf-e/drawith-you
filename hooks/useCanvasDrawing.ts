@@ -133,18 +133,32 @@ export const useCanvasDrawing = ({
       }
 
       if (currentTool === "fill") {
-        const newStroke: Stroke = {
-          id: Date.now().toString(),
-          tool: "fill",
-          color: colorRef.current,
-          size: 0,
-          points: [point],
-          timestamp: Date.now(),
-          isComplete: true,
-        };
-        onStrokeComplete(newStroke);
-        // Clear Ref just in case
-        currentPointsRef.current = [];
+        // Optimistic UI: Use setTimeout to allow render cycle (cursor update/loading state)
+        // to happen BEFORE the heavy floodFill calculation blocks the thread.
+        // We can also trigger a "processing" cursor here if we had one.
+        document.body.style.cursor = "wait";
+
+        setTimeout(() => {
+          const newStroke: Stroke = {
+            id: Date.now().toString(),
+            tool: "fill",
+            color: colorRef.current,
+            size: 0,
+            points: [point],
+            timestamp: Date.now(),
+            isComplete: true,
+          };
+
+          // This will trigger the calculation (sync)
+          onStrokeComplete(newStroke);
+
+          // Clear Ref just in case
+          currentPointsRef.current = [];
+
+          // Restore cursor
+          document.body.style.cursor = "";
+        }, 10);
+
         return;
       }
 

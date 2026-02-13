@@ -10,28 +10,22 @@ import Toast, { ToastType } from "@/components/ui/Toast";
 import PeerLeftModal from "@/components/PeerLeftModal";
 import { useSupabaseSync } from "@/hooks/useSupabaseSync";
 import { useSupabasePresence } from "@/hooks/useSupabasePresence";
+import { useCanvasState } from "@/hooks/useCanvasState";
 import { generateRandomName } from "@/lib/name-generator";
 import { Tool, Stroke } from "@/lib/types";
-import { throttle } from "@/lib/canvas-utils";
+import { throttle, splitStroke } from "@/lib/canvas-utils";
 import { supabase } from "@/lib/supabase";
+import { TOOLS, STORAGE_KEYS } from "@/lib/constants";
 
 interface CanvasPageClientProps {
   roomId: string;
 }
 
 export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
-  const [tool, setTool] = useState<Tool>(null);
-  const [color, setColor] = useState("#000000");
-  const [size, setSize] = useState(5);
-  const [feather, setFeather] = useState(0); // 0 = sharp, >0 = soft
-  const [showToolSettings, setShowToolSettings] = useState(false);
-  const [showProfileSidebar, setShowProfileSidebar] = useState(false);
-  const [backgroundColor, setBackgroundColor] = useState("#FFFFFF");
-  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
   const canvasRef = useRef<CanvasHandle>(null);
 
   // Ignore updates for the currently selected stroke to prevent "jumping" (server echo)
-  // We Memoize the array to prevent infinite loops in useEffect inside the hook
+  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
   const ignoreIds = useRef<string[]>([]);
   if (selectedStrokeId) ignoreIds.current = [selectedStrokeId];
   else ignoreIds.current = [];
@@ -46,7 +40,26 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     canUndo,
     canRedo,
     clearCanvas: clearSupabaseCanvas,
+    deleteStroke,
   } = useSupabaseSync(roomId, ignoreIds.current);
+
+  const {
+    tool,
+    setTool,
+    color,
+    setColor,
+    size,
+    setSize,
+    feather,
+    setFeather,
+    showToolSettings,
+    setShowToolSettings,
+    showProfileSidebar,
+    setShowProfileSidebar,
+    backgroundColor,
+    setBackgroundColor,
+    handleToolChange,
+  } = useCanvasState(strokes);
 
   // Toast State
   const [showToast, setShowToast] = useState(false);
@@ -62,10 +75,28 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
   ).current;
 
   // Presence & Peer Left Modal
-  const [userName, setUserName] = useState(() => generateRandomName());
+  const [userName, setUserName] = useState("");
   const userId = useRef(
     `user-${Math.random().toString(36).substr(2, 9)}`,
   ).current;
+
+  // Persist userName
+  useEffect(() => {
+    const storedName = localStorage.getItem(STORAGE_KEYS.USERNAME);
+    if (storedName) {
+      setUserName(storedName);
+    } else {
+      const newName = generateRandomName();
+      localStorage.setItem(STORAGE_KEYS.USERNAME, newName);
+      setUserName(newName);
+    }
+  }, []);
+
+  const handleUserNameChange = (newName: string) => {
+    setUserName(newName);
+    localStorage.setItem(STORAGE_KEYS.USERNAME, newName);
+    setMyName(newName); // Update presence immediately
+  };
   const { others, updateCursor, setMyName, updateCurrentStroke } =
     useSupabasePresence(roomId, userId, identityColor, userName);
   const [showPeerLeftModal, setShowPeerLeftModal] = useState(false);
@@ -84,65 +115,20 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     setShowToast(true);
   };
 
-  const handleToolChange = (newTool: Tool) => {
-    if (tool === newTool && (newTool === "pen" || newTool === "eraser")) {
-      setShowToolSettings((prev) => !prev);
-      return;
-    }
-
-    setTool(newTool);
-
-    // Auto-open settings for pen/eraser initially?
-    // User said "ganggu banget", so maybe default to FALSE (closed),
-    // and let them click again to open.
-    // OR: Open it once, let them close.
-    // Let's try: Open by default, but easy to close.
-    if (newTool === "pen" || newTool === "eraser") {
-      setShowToolSettings(true);
-    } else {
-      setShowToolSettings(false);
-    }
-
-    // Smart Defaults
-    if (newTool === "eraser") {
-      setSize(30); // Default larger for eraser (wraps the icon)
-    } else if (newTool === "pen") {
-      setSize(5); // Default finer for pen
-    }
-
-    // Smart Default for Text Tool
-    if (newTool === "text") {
-      setSize(12); // Readable default text size
-      let bgColor = "#FFFFFF";
-      // Find last background stroke
-      for (let i = strokes.length - 1; i >= 0; i--) {
-        if (strokes[i].tool === "background") {
-          bgColor = strokes[i].color;
-          break;
-        }
-      }
-
-      // If background is black (or essentially black), default text to white.
-      // Else default to black.
-      if (bgColor.toLowerCase() === "#000000") {
-        setColor("#FFFFFF");
-      } else {
-        setColor("#000000");
-      }
-    }
-  };
-
   // Sync toolbar color when selection changes
+  // Note: We need to sync the hook's local state when selection changes externally
+  // But wait, `useCanvasState` doesn't know about `selectedStrokeId` since we kept it local?
+  // We need to bridge them.
   useEffect(() => {
     if (selectedStrokeId) {
       const s = strokes.find((st) => st.id === selectedStrokeId);
-      if (s && (s.tool === "text" || s.tool === "pen")) {
+      if (s && (s.tool === TOOLS.TEXT || s.tool === TOOLS.PEN)) {
         if (color !== s.color) {
           setColor(s.color);
         }
       }
     }
-  }, [selectedStrokeId, strokes, color]);
+  }, [selectedStrokeId, strokes, color, setColor]);
 
   const handleColorChange = (newColor: string) => {
     setColor(newColor);
@@ -150,7 +136,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     // Live update for selected stroke
     if (selectedStrokeId) {
       const stroke = strokes.find((s) => s.id === selectedStrokeId);
-      if (stroke && (stroke.tool === "text" || stroke.tool === "pen")) {
+      if (stroke && (stroke.tool === TOOLS.TEXT || stroke.tool === TOOLS.PEN)) {
         // Direct call - throttling is now handled inside useSupabaseSync
         updateStroke(selectedStrokeId, { color: newColor });
       }
@@ -158,7 +144,64 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
   };
 
   const handleStrokeComplete = (stroke: Stroke) => {
-    addStroke(stroke);
+    if (stroke.tool === TOOLS.ERASER) {
+      // Vector Eraser Logic (Destructive)
+      let strokesToDelete: string[] = [];
+      let strokesToAdd: Stroke[] = [];
+      let hasChanges = false;
+
+      // Iterate over ALL existing strokes to see if they are cut
+      // Note: working with latest 'strokes' state
+      strokes.forEach((existingStroke) => {
+        if (
+          existingStroke.tool === TOOLS.BACKGROUND ||
+          existingStroke.tool === TOOLS.ERASER
+        )
+          return;
+
+        // Optimization: Quick bounding box check could go here
+
+        const fragments = splitStroke(
+          existingStroke,
+          stroke.points,
+          stroke.size,
+        );
+
+        // If split resulted in changes (e.g. 0 fragments = fully erased, or >1 fragments = split, or 1 fragment but shorter)
+        // Actually splitStroke returns 1 fragment identical to original if NO erase happened.
+        // We need to know if it CHANGED.
+        // Simple check: if fragments.length !== 1 or fragments[0].points.length !== existingStroke.points.length
+
+        let isModified = false;
+        if (fragments.length !== 1) {
+          isModified = true;
+        } else {
+          if (fragments[0].points.length !== existingStroke.points.length) {
+            isModified = true;
+          }
+        }
+
+        if (isModified) {
+          hasChanges = true;
+          strokesToDelete.push(existingStroke.id);
+          strokesToAdd.push(...fragments);
+        }
+      });
+
+      if (hasChanges) {
+        // Apply updates
+        // 1. Delete modified/erased strokes
+        strokesToDelete.forEach((id) => deleteStroke(id));
+
+        // 2. Add new fragments
+        strokesToAdd.forEach((s) => addStroke(s));
+
+        // 3. Do NOT add the eraser stroke to history/canvas
+      }
+    } else {
+      // Normal stroke (Pen, Text, etc)
+      addStroke(stroke);
+    }
   };
 
   const handleClear = async () => {
@@ -195,7 +238,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
     // NEW: Add as a stroke
     const newStroke: Stroke = {
       id: Date.now().toString(),
-      tool: "background",
+      tool: TOOLS.BACKGROUND,
       color: bgColor,
       size: 0,
       points: [{ x: 0, y: 0 }], // Dummy point
@@ -272,6 +315,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
         onSave={handleSave}
         onBackgroundChange={handleBackgroundChange}
         onProfileClick={() => setShowProfileSidebar(true)}
+        onShowSettings={() => setShowToolSettings((prev) => !prev)}
       />
 
       {showToolSettings && (
@@ -289,10 +333,7 @@ export default function CanvasPageClient({ roomId }: CanvasPageClientProps) {
         isOpen={showProfileSidebar}
         onClose={() => setShowProfileSidebar(false)}
         userName={userName}
-        onUserNameChange={(name) => {
-          setUserName(name);
-          setMyName(name);
-        }}
+        onUserNameChange={handleUserNameChange}
         userColor={identityColor}
         backgroundColor={backgroundColor}
         roomId={roomId}

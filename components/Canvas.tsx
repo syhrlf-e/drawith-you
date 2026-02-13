@@ -12,6 +12,7 @@ import { Point, Stroke, Tool, UserPresence } from "@/lib/types";
 import { getCoordinates, isPointNearStroke } from "@/lib/canvas-utils";
 import { useCanvasDrawing } from "@/hooks/useCanvasDrawing";
 import { useCanvasRender } from "@/hooks/useCanvasRender";
+import { TOOLS, DEFAULT_COLORS } from "@/lib/constants";
 
 export interface CanvasHandle {
   clearCanvas: () => void;
@@ -79,35 +80,49 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
     // -- Helper: Hit Test --
     const hitTestStroke = useCallback(
       (x: number, y: number): string | null => {
-        // Need context for text measurement
-        const ctx = canvasRef.current?.getContext("2d");
+        // Hit Test Logic
+        const hitTest = (x: number, y: number): string | null => {
+          // Need context for text measurement
+          const ctx = canvasRef.current?.getContext("2d");
 
-        for (let i = strokes.length - 1; i >= 0; i--) {
-          const s = strokes[i];
+          // Iterate in reverse to find top-most stroke
+          for (let i = strokes.length - 1; i >= 0; i--) {
+            const s = strokes[i];
+            if (s.tool === TOOLS.BACKGROUND) continue;
+            if (s.tool === TOOLS.ERASER) continue; // Erasers themselves are not selectable
 
-          if (s.tool === "text" && s.text && s.points[0] && ctx) {
-            const fontSize = s.size * 3;
-            ctx.font = `${fontSize}px Satoshi, sans-serif`;
-            const metrics = ctx.measureText(s.text);
-            const p = s.points[0];
-            const width = metrics.width;
-            const height = fontSize;
-
-            if (
-              x >= p.x &&
-              x <= p.x + width &&
-              y >= p.y - height &&
-              y <= p.y + 10
-            ) {
-              return s.id;
+            // Check if point hits this stroke
+            let isHit = false;
+            if (s.tool === TOOLS.TEXT && s.text && s.points[0] && ctx) {
+              const fontSize = s.size * 3;
+              ctx.font = `${fontSize}px Satoshi, sans-serif`;
+              const metrics = ctx.measureText(s.text);
+              const p = s.points[0];
+              if (
+                x >= p.x &&
+                x <= p.x + metrics.width &&
+                y >= p.y - fontSize &&
+                y <= p.y + 10
+              ) {
+                isHit = true;
+              }
+            } else if (s.tool === TOOLS.PEN || s.tool === TOOLS.FILL) {
+              // Fill is basically a shape or point, treat as stroke for now or usually fillers are unselectable?
+              // Checking 'fill' might be complex if it's flood fill, but if it has points array, user might select it?
+              // Assuming fill is selectable for now if it has points.
+              if (isPointNearStroke(x, y, s.points, Math.max(s.size * 2, 10))) {
+                // Added s.points and size for isPointNearStroke
+                isHit = true;
+              }
             }
-          } else if (s.tool === "pen" || s.tool === "eraser") {
-            if (isPointNearStroke(x, y, s.points, Math.max(s.size * 2, 10))) {
+
+            if (isHit) {
               return s.id;
             }
           }
-        }
-        return null;
+          return null;
+        };
+        return hitTest(x, y); // Call the inner hitTest function
       },
       [strokes],
     );
@@ -165,6 +180,16 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       cursorPos, // Pass local cursor position
     });
 
+    // Helper to get current background color
+    const getCurrentBackgroundColor = () => {
+      for (let i = strokes.length - 1; i >= 0; i--) {
+        if (strokes[i].tool === TOOLS.BACKGROUND) {
+          return strokes[i].color;
+        }
+      }
+      return DEFAULT_COLORS.WHITE;
+    };
+
     // Component initialization complete
 
     // CRITICAL: Manually set overlay canvas dimensions to match container
@@ -198,22 +223,39 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         const overlay = overlayRef.current;
         if (!canvas || !overlay) return;
 
-        // Composite for save
-        const compositeCanvas = document.createElement("canvas");
-        compositeCanvas.width = canvas.width;
-        compositeCanvas.height = canvas.height;
-        const ctx = compositeCanvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(canvas, 0, 0);
-          ctx.drawImage(overlay, 0, 0); // Include ghosts/cursors in save? Maybe not.
-          // Usually save is just the artwork. Let's keep just canvas (main) for now.
-          // Wait, user might want to save what they see.
-          // Reverting to just 'canvas' (main strokes) is safer for "Clean Export".
+        if (!canvas) return;
+
+        // Create a temporary canvas to composite background + drawing
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        const ctx = tempCanvas.getContext("2d");
+        if (!ctx) return;
+
+        // 1. Draw Background Color
+        // Find latest background stroke or default to white.
+        // Actually, we pass 'backgroundColor' prop to Canvas, let's use that if possible.
+        // But we don't have it in this scope easily without prop drilling or searching strokes.
+        // Let's search strokes as before since that's the source of truth for "saved" background,
+        // OR rely on the parent state passed down.
+        // Better: Search strokes like before to be safe.
+        let bgColor: string = DEFAULT_COLORS.WHITE;
+        for (let i = strokes.length - 1; i >= 0; i--) {
+          if (strokes[i].tool === TOOLS.BACKGROUND) {
+            bgColor = strokes[i].color;
+            break;
+          }
         }
 
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+        // 2. Draw the main canvas (transparent strokes) on top
+        ctx.drawImage(canvas, 0, 0);
+
         const link = document.createElement("a");
-        link.download = `drawith-you-${Date.now()}.png`;
-        link.href = canvas.toDataURL(); // Save ONLY main strokes layer
+        link.download = `drawith-${Date.now()}.png`;
+        link.href = tempCanvas.toDataURL();
         link.click();
       },
       setBackgroundColor: () => {}, // Deprecated
@@ -223,7 +265,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
     const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
       // Special case: Text tool click existing text or new spot
       // We override the hook's startDrawing for text tool specific formatting
-      if (tool === "text") {
+      if (tool === TOOLS.TEXT) {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const point = getCoordinates(e, canvas);
@@ -239,7 +281,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
 
         if (hitId && !isTyping) {
           const s = strokes.find((st) => st.id === hitId);
-          if (s && s.tool === "text") {
+          if (s && s.tool === TOOLS.TEXT) {
             setIsTyping(true);
             setTextInput({
               x: s.points[0].x,
@@ -295,7 +337,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         } else {
           const newStroke: Stroke = {
             id: Date.now().toString(),
-            tool: "text",
+            tool: TOOLS.TEXT,
             color: color,
             size: size,
             points: [{ x: textInput.x, y: textInput.y }],
@@ -314,15 +356,15 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
     // -- Cursor Logic --
     const getCursorStyle = () => {
       switch (tool) {
-        case "pen":
+        case TOOLS.PEN:
           return "url('https://api.iconify.design/lucide:pencil.svg?color=%23000000&width=24&height=24') 0 24, auto";
-        case "eraser":
+        case TOOLS.ERASER:
           return "none"; // Hide cursor, we draw a custom circle
-        case "text":
+        case TOOLS.TEXT:
           return "text";
-        case "fill":
+        case TOOLS.FILL:
           return "url('https://api.iconify.design/lucide:paint-bucket.svg?color=%23000000&width=24&height=24') 12 12, auto";
-        case "select":
+        case TOOLS.SELECT:
           return "default";
         default:
           return "crosshair";
@@ -335,7 +377,12 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         className="relative w-full h-[80vh] bg-white rounded-[20px] shadow-lg overflow-hidden touch-none"
         style={{ cursor: getCursorStyle() }}
       >
-        <canvas ref={canvasRef} className="absolute inset-0 block z-10" />
+        {/* Main Canvas - Committed Strokes */}
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 block z-10"
+          style={{ backgroundColor: getCurrentBackgroundColor() }} // Add helper to get bg color
+        />
         {/* Overlay Canvas - NOW HANDLES EVENTS */}
         <canvas
           ref={overlayRef}

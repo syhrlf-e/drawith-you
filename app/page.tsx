@@ -26,7 +26,7 @@ export default function Home() {
         <div className="space-y-8">
           <div className="space-y-4">
             <h1 className="text-5xl md:text-6xl font-bold text-pink-primary tracking-tight">
-              Drawith You
+              Drawith
             </h1>
             <p className="text-xl text-gray-600 leading-relaxed">
               Menggambar kolaboratif dalam waktu nyata untuk semua orang. Buat

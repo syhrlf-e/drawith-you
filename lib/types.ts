@@ -1,11 +1,6 @@
-export type Tool =
-  | "pen"
-  | "eraser"
-  | "text"
-  | "fill"
-  | "select"
-  | "background"
-  | null;
+import { TOOLS } from "./constants";
+
+export type Tool = (typeof TOOLS)[keyof typeof TOOLS] | null;
 
 export interface Point {
   x: number;

@@ -200,23 +200,22 @@ export const useSupabaseSync = (
     [],
   );
 
-  const deleteStroke = useCallback((strokeId: string) => {
-    // OPTIMISTIC UPDATE FIRST - immediate UI feedback
-    setStrokes((prev) => prev.filter((s) => s.id !== strokeId));
+  const deleteStroke = useCallback(
+    (strokeId: string) => {
+      // 1. OPTIMISTIC UPDATE
+      setStrokes((prev) => prev.filter((s) => s.id !== strokeId));
 
-    // Remove from undo stack, clear redo
-    setUndoStack((prev) => prev.filter((s) => s.id !== strokeId));
-    setRedoStack([]);
-
-    // Background sync to Supabase (fire-and-forget, non-blocking)
-    supabase
-      .from("strokes")
-      .delete()
-      .eq("id", strokeId)
-      .then(({ error }) => {
-        if (error) console.error("Error syncing stroke deletion:", error);
-      });
-  }, []);
+      // 2. NETWORK SYNC
+      supabase
+        .from("strokes")
+        .delete()
+        .eq("id", strokeId)
+        .then(({ error }) => {
+          if (error) console.error("Error deleting stroke:", error);
+        });
+    },
+    [roomId],
+  );
 
   const undo = useCallback(() => {
     if (undoStack.length === 0) return;
@@ -295,7 +294,7 @@ export const useSupabaseSync = (
     undo,
     redo,
     canUndo,
-    canRedo,
+    canRedo: redoStack.length > 0,
     clearCanvas,
   };
 };

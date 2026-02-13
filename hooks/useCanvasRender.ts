@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { Point, Stroke, Tool, UserPresence } from "@/lib/types";
-import { drawSmoothLine, floodFill } from "@/lib/canvas-utils";
+import { drawSmoothLine, getFloodFillRegion } from "@/lib/canvas-utils";
+import { TOOLS, DEFAULT_COLORS } from "@/lib/constants";
 
 interface UseCanvasRenderProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -35,6 +36,12 @@ export const useCanvasRender = ({
   feather = 0,
   cursorPos,
 }: UseCanvasRenderProps) => {
+  const [editingStrokeIdState, setEditingStrokeId] = useState<string | null>(
+    editingStrokeId,
+  );
+  // Cache for expensive fill operations
+  // Map<strokeId, HTMLCanvasElement>
+  const fillCache = useRef<Map<string, HTMLCanvasElement>>(new Map());
   // Refs to track current values for overlay rendering (avoid stale closure)
   const toolRef = useRef(tool);
   const colorRef = useRef(color);
@@ -81,37 +88,72 @@ export const useCanvasRender = ({
 
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    // Background
-    let bgColor = "#FFFFFF";
-    for (let i = strokes.length - 1; i >= 0; i--) {
-      if (strokes[i].tool === "background") {
-        bgColor = strokes[i].color;
-        break;
-      }
-    }
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0, 0, rect.width, rect.height);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    // Define logical width/height for drawing
+    const width = rect.width;
+    const height = rect.height;
+
+    // Note: We do NOT draw background here anymore.
+    // Background is handled by CSS on the canvas element.
+    // This allows eraser (destination-out) to make pixels transparent, showing the CSS background.
 
     // Draw Committed Strokes
-    strokes.forEach((stroke) => {
-      if (stroke.tool === "background") return;
+    // Filter out invalid/deleted strokes if any
+    const validStrokes = strokes.filter((s) => !s.id.startsWith("temp-"));
+
+    // Check if we need to purge cache for deleted strokes
+    if (fillCache.current.size > validStrokes.length + 10) {
+      const activeIds = new Set(validStrokes.map((s) => s.id));
+      for (const id of fillCache.current.keys()) {
+        if (!activeIds.has(id)) {
+          fillCache.current.delete(id);
+        }
+      }
+    }
+
+    validStrokes.forEach((stroke) => {
+      if (stroke.tool === TOOLS.BACKGROUND) return;
       if (stroke.id === editingStrokeId) return;
 
       // Selection Glow
       if (
         stroke.id === selectedStrokeId &&
-        (tool === "select" || tool === "text")
+        (tool === TOOLS.SELECT || tool === TOOLS.TEXT)
       ) {
         ctx.save();
         ctx.shadowBlur = 10;
         ctx.shadowColor = "#FF1493";
       }
 
-      if (stroke.tool === "fill") {
-        const p = stroke.points[0];
-        // Fix: floodFill uses getImageData which ignores scale, so we must pass physical coordinates
-        if (p) floodFill(ctx, p.x * dpr, p.y * dpr, stroke.color);
-      } else if (stroke.tool === "text") {
+      if (stroke.tool === TOOLS.FILL) {
+        // Cached Fill Logic
+        if (fillCache.current.has(stroke.id)) {
+          const cachedCanvas = fillCache.current.get(stroke.id)!;
+          ctx.drawImage(cachedCanvas, 0, 0, width, height);
+        } else {
+          // Compute Fill
+          const p = stroke.points[0];
+          if (p) {
+            const seedX = p.x * dpr;
+            const seedY = p.y * dpr;
+
+            // We pass 'ctx' which currently holds the scene (before this fill).
+            // getFloodFillRegion reads pixels from it.
+            const filledRegion = getFloodFillRegion(
+              ctx,
+              seedX,
+              seedY,
+              stroke.color,
+            );
+
+            if (filledRegion) {
+              fillCache.current.set(stroke.id, filledRegion);
+              ctx.drawImage(filledRegion, 0, 0, width, height);
+            }
+          }
+        }
+      } else if (stroke.tool === TOOLS.TEXT) {
         const p = stroke.points[0];
         if (p && stroke.text) {
           const fontSize = stroke.size * 3;
@@ -124,10 +166,10 @@ export const useCanvasRender = ({
           ctx,
           stroke.points,
           stroke.color,
-          stroke.id === selectedStrokeId && tool === "select"
+          stroke.id === selectedStrokeId && tool === TOOLS.SELECT
             ? stroke.size + 2
             : stroke.size,
-          stroke.tool === "eraser",
+          stroke.tool === TOOLS.ERASER,
           stroke.feather || 0,
           "MAIN_COMMITTED_STROKE",
         );
@@ -175,18 +217,30 @@ export const useCanvasRender = ({
     const currentCursorPos = cursorPosRef.current;
     const currentOthers = othersRef.current;
 
+    // Helper to get bg color
+    let bgColor: string = DEFAULT_COLORS.WHITE;
+    for (let i = strokes.length - 1; i >= 0; i--) {
+      if (strokes[i].tool === TOOLS.BACKGROUND) {
+        bgColor = strokes[i].color;
+        break;
+      }
+    }
+
     // 1. Ghost Strokes (Peers)
     currentOthers.forEach((user) => {
       if (user.currentStroke) {
         const s = user.currentStroke;
-        if (s.tool === "pen" || s.tool === "eraser") {
+        if (s.tool === TOOLS.PEN || s.tool === TOOLS.ERASER) {
           ctx.globalAlpha = 0.5;
+          // Loophole: If eraser, we paint with background color to simulate erasing on the overlay
+          // If pen, we draw normally.
+          const isEraser = s.tool === TOOLS.ERASER;
           drawSmoothLine(
             ctx,
             s.points,
-            s.color,
+            isEraser ? bgColor : s.color,
             s.size,
-            s.tool === "eraser",
+            false, // vital: force source-over, NOT destination-out for overlay
             s.feather || 0,
             "GHOST_PEER_STROKE",
           );
@@ -199,7 +253,7 @@ export const useCanvasRender = ({
     const activePoints = currentPointsRef.current;
 
     if (activePoints.length > 0) {
-      if (currentTool === "pen") {
+      if (currentTool === TOOLS.PEN) {
         drawSmoothLine(
           ctx,
           activePoints,
@@ -209,38 +263,24 @@ export const useCanvasRender = ({
           currentFeather,
           "OVERLAY_ACTIVE_STROKE",
         );
-      } else if (currentTool === "eraser") {
-        // Eraser preview: show white/red semi-transparent stroke to indicate what will be erased
-        ctx.save();
-        ctx.strokeStyle = "rgba(255, 0, 0, 0.3)"; // Red semi-transparent
-        ctx.lineWidth = currentSize;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-
-        ctx.beginPath();
-        ctx.moveTo(activePoints[0].x, activePoints[0].y);
-
-        for (let i = 1; i < activePoints.length - 1; i++) {
-          const xc = (activePoints[i].x + activePoints[i + 1].x) / 2;
-          const yc = (activePoints[i].y + activePoints[i + 1].y) / 2;
-          ctx.quadraticCurveTo(activePoints[i].x, activePoints[i].y, xc, yc);
-        }
-
-        if (activePoints.length > 1) {
-          const last = activePoints[activePoints.length - 1];
-          const secondLast = activePoints[activePoints.length - 2];
-          ctx.quadraticCurveTo(secondLast.x, secondLast.y, last.x, last.y);
-        }
-
-        ctx.stroke();
-        ctx.restore();
+      } else if (currentTool === TOOLS.ERASER) {
+        // Real-time Eraser Visual: Paint with background color
+        drawSmoothLine(
+          ctx,
+          activePoints,
+          bgColor, // Paint with background color
+          currentSize,
+          false, // Use source-over!
+          0,
+          "OVERLAY_ACTIVE_ERASER",
+        );
       }
     }
 
     // 3. Previews & Cursors
 
     // Eraser Preview
-    if (currentTool === "eraser" && currentCursorPos) {
+    if (currentTool === TOOLS.ERASER && currentCursorPos) {
       ctx.save();
       ctx.beginPath();
       ctx.arc(
@@ -259,7 +299,7 @@ export const useCanvasRender = ({
     }
 
     // Pen Preview
-    if (currentTool === "pen" && currentCursorPos) {
+    if (currentTool === TOOLS.PEN && currentCursorPos) {
       ctx.save();
       ctx.beginPath();
       ctx.arc(

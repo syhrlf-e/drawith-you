@@ -18,7 +18,7 @@ const satoshi = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Drawith You",
+  title: "Drawith",
   description: "Real-time collaborative drawing application",
 };
 

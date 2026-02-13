@@ -1,0 +1,49 @@
+export const TOOLS = {
+  PEN: "pen",
+  ERASER: "eraser",
+  TEXT: "text",
+  FILL: "fill",
+  SELECT: "select",
+  BACKGROUND: "background",
+} as const;
+
+export const DEFAULT_COLORS = {
+  BLACK: "#000000",
+  WHITE: "#FFFFFF",
+  LIGHT_GRAY: "#F5F5F5",
+  FLORAL_WHITE: "#FFFAF0",
+  ALICE_BLUE: "#F0F8FF",
+  LAVENDER_BLUSH: "#FFF0F5",
+  VERY_LIGHT_GRAY: "#FAFAFA",
+  GRAY: "#E0E0E0",
+} as const;
+
+export const BACKGROUND_PALETTE = [
+  DEFAULT_COLORS.WHITE,
+  DEFAULT_COLORS.LIGHT_GRAY,
+  DEFAULT_COLORS.FLORAL_WHITE,
+  DEFAULT_COLORS.ALICE_BLUE,
+  DEFAULT_COLORS.LAVENDER_BLUSH,
+  DEFAULT_COLORS.VERY_LIGHT_GRAY,
+  DEFAULT_COLORS.GRAY,
+  DEFAULT_COLORS.BLACK,
+];
+
+export const TOOL_DEFAULTS = {
+  PEN_SIZE: 5,
+  ERASER_SIZE: 30,
+  TEXT_SIZE: 12,
+  FEATHER: 0,
+};
+
+export const STORAGE_KEYS = {
+  USERNAME: "drawith_username",
+};
+
+export const LIMITS = {
+  MAX_RECENT_COLORS: 8,
+  MIN_SIZE: 1,
+  MAX_SIZE: 50,
+  MIN_FEATHER: 0,
+  MAX_FEATHER: 20,
+};

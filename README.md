@@ -1,8 +1,11 @@
-# 🎨 Drawith You
+# 🎨 Drawith
 
-**Drawith You** is a real-time collaborative drawing application built with **Next.js 14** and **Firebase**. It allows multiple users to draw, write, and design together on a shared digital canvas instantly.
+**Drawith** is a real-time collaborative drawing application built with **Next.js 14** and **Firebase**. It allows multiple users to draw, write, and design together on a shared digital canvas instantly.
 
-![Drawith You Preview](./public/preview.png)
+![Drawith Preview](./public/preview.png)
+...
+git clone https://github.com/yourusername/drawith.git
+cd drawith
 
 ## ✨ Key Features
 
@@ -37,8 +40,8 @@ Follow these steps to run the project locally:
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/yourusername/drawith-you.git
-cd drawith-you
+git clone https://github.com/yourusername/drawith.git
+cd drawith
 ```
 
 ### 2. Install Dependencies
