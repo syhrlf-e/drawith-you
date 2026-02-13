@@ -139,6 +139,28 @@ export const useSupabaseSync = (
           }
         },
       )
+      // Broadcast listener: Eraser batch operation
+      .on("broadcast", { event: "erase_batch" }, (payload) => {
+        const { deletedIds, fragments } = payload.payload;
+        console.log(
+          `[Sync] 📡 Received BROADCAST erase_batch: deleting ${deletedIds.length}, adding ${fragments?.length || 0} fragments`,
+        );
+        setStrokes((prev) => {
+          // Atomic: remove deleted AND add fragments in ONE update
+          const filtered = prev.filter((s) => !deletedIds.includes(s.id));
+          if (fragments && fragments.length > 0) {
+            return [...filtered, ...fragments];
+          }
+          return filtered;
+        });
+      })
+      // Broadcast listener: Clear canvas operation
+      .on("broadcast", { event: "clear_canvas" }, () => {
+        console.log(`[Sync] 📡 Received BROADCAST clear_canvas`);
+        setStrokes([]);
+        setUndoStack([]);
+        setRedoStack([]);
+      })
       .subscribe((status) => {
         console.log(`[Sync] Subscription status for room ${roomId}:`, status);
         if (status === "SUBSCRIBED") {
@@ -398,6 +420,17 @@ export const useSupabaseSync = (
         return [...filtered, ...newFragments];
       });
 
+      // 1.5 BROADCAST to remote clients immediately (don't wait for DB)
+      // Include fragments so remote clients can apply delete+add atomically (no blink)
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "erase_batch",
+        payload: { deletedIds, fragments: newFragments },
+      });
+      console.log(
+        `[Sync] 📡 Broadcasted erase_batch with ${deletedIds.length} deletions and ${newFragments.length} fragments`,
+      );
+
       // 2. Delete all strokes from database (parallel is OK here)
       const deletePromises = deletedIds.map((id) =>
         supabase
@@ -451,7 +484,15 @@ export const useSupabaseSync = (
     setUndoStack([]);
     setRedoStack([]);
 
-    // Delete all strokes from Supabase
+    // BROADCAST to remote clients immediately
+    channelRef.current?.send({
+      type: "broadcast",
+      event: "clear_canvas",
+      payload: {},
+    });
+    console.log(`[Sync] 📡 Broadcasted clear_canvas`);
+
+    // Delete all strokes from Supabase (persistence)
     supabase
       .from("strokes")
       .delete()
