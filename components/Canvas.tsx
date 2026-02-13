@@ -136,6 +136,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
     // -- Hooks --
     const {
       isDrawing,
+      isDraggingStroke,
+      isScaling,
       currentPoints,
       currentPointsRef, // Get Ref
       startDrawing: hookStartDrawing,
@@ -175,12 +177,13 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       tool,
       selectedStrokeId,
       editingStrokeId,
-      currentPoints: currentPoints, // Keep strictly for compatibility if prop type demands it, but logic uses Ref
-      currentPointsRef, // Pass Ref
+      currentPoints: currentPoints,
+      currentPointsRef,
       color,
       size,
       feather,
-      cursorPos, // Pass local cursor position
+      cursorPos,
+      isTransforming: isDraggingStroke || isScaling,
     });
 
     // Helper to get current background color

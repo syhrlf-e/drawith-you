@@ -1,4 +1,4 @@
-import { Point } from "./types";
+import { Point, BoundingBox, HandlePosition } from "./types";
 
 export const getCoordinates = (
   event: MouseEvent | TouchEvent | React.MouseEvent | React.TouchEvent,
@@ -389,13 +389,6 @@ export const resamplePoints = (
 
 // --- Bounding Box Optimization ---
 
-interface BoundingBox {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-}
-
 export const getBoundingBox = (
   points: Point[],
   padding: number = 0,
@@ -509,4 +502,175 @@ export const splitStroke = (
   }
 
   return newStrokes;
+};
+
+// --- Selection Box Utilities ---
+
+const HANDLE_SIZE = 8; // Radius of handle hit zone
+
+export interface HandleInfo {
+  position: HandlePosition;
+  x: number;
+  y: number;
+}
+
+/**
+ * Get 8 handle positions for a bounding box.
+ * 4 corners (nw, ne, sw, se) + 4 midpoints (n, s, e, w)
+ */
+export const getHandlePositions = (bbox: BoundingBox): HandleInfo[] => {
+  const midX = (bbox.minX + bbox.maxX) / 2;
+  const midY = (bbox.minY + bbox.maxY) / 2;
+
+  return [
+    { position: "nw", x: bbox.minX, y: bbox.minY },
+    { position: "n", x: midX, y: bbox.minY },
+    { position: "ne", x: bbox.maxX, y: bbox.minY },
+    { position: "e", x: bbox.maxX, y: midY },
+    { position: "se", x: bbox.maxX, y: bbox.maxY },
+    { position: "s", x: midX, y: bbox.maxY },
+    { position: "sw", x: bbox.minX, y: bbox.maxY },
+    { position: "w", x: bbox.minX, y: midY },
+  ];
+};
+
+/**
+ * Test if a point hits one of the handles.
+ * Returns the handle position or null.
+ */
+export const hitTestHandle = (
+  x: number,
+  y: number,
+  bbox: BoundingBox,
+  tolerance: number = HANDLE_SIZE + 4,
+): HandlePosition | null => {
+  const handles = getHandlePositions(bbox);
+  for (const h of handles) {
+    const dx = x - h.x;
+    const dy = y - h.y;
+    if (dx * dx + dy * dy <= tolerance * tolerance) {
+      return h.position;
+    }
+  }
+  return null;
+};
+
+/**
+ * Get the cursor style for a handle position.
+ */
+export const getHandleCursor = (handle: HandlePosition): string => {
+  const cursorMap: Record<HandlePosition, string> = {
+    nw: "nwse-resize",
+    se: "nwse-resize",
+    ne: "nesw-resize",
+    sw: "nesw-resize",
+    n: "ns-resize",
+    s: "ns-resize",
+    e: "ew-resize",
+    w: "ew-resize",
+  };
+  return cursorMap[handle];
+};
+
+/**
+ * Transform points from one bounding box to another.
+ * Used for scaling/stretching strokes.
+ */
+export const transformStrokePoints = (
+  points: Point[],
+  originalBbox: BoundingBox,
+  newBbox: BoundingBox,
+): Point[] => {
+  const origW = originalBbox.maxX - originalBbox.minX;
+  const origH = originalBbox.maxY - originalBbox.minY;
+
+  // Avoid division by zero
+  const scaleX = origW === 0 ? 1 : (newBbox.maxX - newBbox.minX) / origW;
+  const scaleY = origH === 0 ? 1 : (newBbox.maxY - newBbox.minY) / origH;
+
+  return points.map((p) => ({
+    x: newBbox.minX + (p.x - originalBbox.minX) * scaleX,
+    y: newBbox.minY + (p.y - originalBbox.minY) * scaleY,
+  }));
+};
+
+/**
+ * Compute new bounding box when dragging a handle.
+ * Corner handles maintain aspect ratio, edge handles stretch one axis.
+ */
+export const computeNewBbox = (
+  originalBbox: BoundingBox,
+  handle: HandlePosition,
+  dragX: number,
+  dragY: number,
+): BoundingBox => {
+  const newBbox = { ...originalBbox };
+
+  switch (handle) {
+    // Corner handles — proportional scaling
+    case "se": {
+      const origW = originalBbox.maxX - originalBbox.minX;
+      const origH = originalBbox.maxY - originalBbox.minY;
+      if (origW === 0 || origH === 0) break;
+      const ratio = origW / origH;
+      const dx = dragX - originalBbox.maxX;
+      const dy = dragY - originalBbox.maxY;
+      // Use the larger delta to determine scale
+      const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy * ratio;
+      newBbox.maxX = originalBbox.maxX + delta;
+      newBbox.maxY = originalBbox.maxY + delta / ratio;
+      break;
+    }
+    case "nw": {
+      const origW = originalBbox.maxX - originalBbox.minX;
+      const origH = originalBbox.maxY - originalBbox.minY;
+      if (origW === 0 || origH === 0) break;
+      const ratio = origW / origH;
+      const dx = dragX - originalBbox.minX;
+      const dy = dragY - originalBbox.minY;
+      const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy * ratio;
+      newBbox.minX = originalBbox.minX + delta;
+      newBbox.minY = originalBbox.minY + delta / ratio;
+      break;
+    }
+    case "ne": {
+      const origW = originalBbox.maxX - originalBbox.minX;
+      const origH = originalBbox.maxY - originalBbox.minY;
+      if (origW === 0 || origH === 0) break;
+      const ratio = origW / origH;
+      const dx = dragX - originalBbox.maxX;
+      const dy = dragY - originalBbox.minY;
+      const delta = Math.abs(dx) > Math.abs(dy) ? dx : -dy * ratio;
+      newBbox.maxX = originalBbox.maxX + delta;
+      newBbox.minY = originalBbox.minY - delta / ratio;
+      break;
+    }
+    case "sw": {
+      const origW = originalBbox.maxX - originalBbox.minX;
+      const origH = originalBbox.maxY - originalBbox.minY;
+      if (origW === 0 || origH === 0) break;
+      const ratio = origW / origH;
+      const dx = dragX - originalBbox.minX;
+      const dy = dragY - originalBbox.maxY;
+      const delta = Math.abs(dx) > Math.abs(dy) ? dx : -dy * ratio;
+      newBbox.minX = originalBbox.minX + delta;
+      newBbox.maxY = originalBbox.maxY - delta / ratio;
+      break;
+    }
+    // Edge handles — single axis stretch
+    case "n":
+      newBbox.minY = dragY;
+      break;
+    case "s":
+      newBbox.maxY = dragY;
+      break;
+    case "e":
+      newBbox.maxX = dragX;
+      break;
+    case "w":
+      newBbox.minX = dragX;
+      break;
+  }
+
+  return newBbox;
 };

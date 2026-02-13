@@ -1,6 +1,11 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Point, Stroke, Tool, UserPresence } from "@/lib/types";
-import { drawSmoothLine, getFloodFillRegion } from "@/lib/canvas-utils";
+import {
+  drawSmoothLine,
+  getFloodFillRegion,
+  getBoundingBox,
+  getHandlePositions,
+} from "@/lib/canvas-utils";
 import { TOOLS, DEFAULT_COLORS } from "@/lib/constants";
 
 interface UseCanvasRenderProps {
@@ -18,6 +23,7 @@ interface UseCanvasRenderProps {
   size: number;
   feather?: number;
   cursorPos?: { x: number; y: number } | null;
+  isTransforming?: boolean;
 }
 
 export const useCanvasRender = ({
@@ -35,6 +41,7 @@ export const useCanvasRender = ({
   size,
   feather = 0,
   cursorPos,
+  isTransforming = false,
 }: UseCanvasRenderProps) => {
   const [editingStrokeIdState, setEditingStrokeId] = useState<string | null>(
     editingStrokeId,
@@ -49,6 +56,8 @@ export const useCanvasRender = ({
   const featherRef = useRef(feather);
   const cursorPosRef = useRef(cursorPos);
   const othersRef = useRef(others);
+  const selectedStrokeIdRef = useRef(selectedStrokeId);
+  const strokesRef = useRef(strokes);
 
   // Sync props to refs
   useEffect(() => {
@@ -58,7 +67,28 @@ export const useCanvasRender = ({
     featherRef.current = feather;
     cursorPosRef.current = cursorPos;
     othersRef.current = others;
-  }, [tool, color, size, feather, cursorPos, others]);
+    selectedStrokeIdRef.current = selectedStrokeId;
+    strokesRef.current = strokes;
+  }, [
+    tool,
+    color,
+    size,
+    feather,
+    cursorPos,
+    others,
+    selectedStrokeId,
+    strokes,
+  ]);
+
+  // Track transform state to invalidate fill cache when drag ends
+  const wasTransformingRef = useRef(false);
+  useEffect(() => {
+    if (wasTransformingRef.current && !isTransforming) {
+      // Drag just ended — clear fill cache so fills recompute
+      fillCache.current.clear();
+    }
+    wasTransformingRef.current = isTransforming;
+  }, [isTransforming]);
 
   // --- LAYER 1: Main Canvas (Committed Strokes) ---
   // Only redraws when history changes (undo/redo/new stroke/load)
@@ -116,17 +146,10 @@ export const useCanvasRender = ({
       if (stroke.tool === TOOLS.BACKGROUND) return;
       if (stroke.id === editingStrokeId) return;
 
-      // Selection Glow
-      if (
-        stroke.id === selectedStrokeId &&
-        (tool === TOOLS.SELECT || tool === TOOLS.TEXT)
-      ) {
-        ctx.save();
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = "#FF1493";
-      }
-
       if (stroke.tool === TOOLS.FILL) {
+        // Skip fill recomputation during active drag/scale to avoid lag
+        if (isTransforming) return;
+
         // Cached Fill Logic
         if (fillCache.current.has(stroke.id)) {
           const cachedCanvas = fillCache.current.get(stroke.id)!;
@@ -166,20 +189,11 @@ export const useCanvasRender = ({
           ctx,
           stroke.points,
           stroke.color,
-          stroke.id === selectedStrokeId && tool === TOOLS.SELECT
-            ? stroke.size + 2
-            : stroke.size,
+          stroke.size,
           stroke.tool === TOOLS.ERASER,
           stroke.feather || 0,
           "MAIN_COMMITTED_STROKE",
         );
-      }
-
-      if (
-        stroke.id === selectedStrokeId &&
-        (tool === "select" || tool === "text")
-      ) {
-        ctx.restore();
       }
     });
   }, [canvasRef, strokes, editingStrokeId, selectedStrokeId, tool]);
@@ -320,6 +334,66 @@ export const useCanvasRender = ({
       ctx.lineWidth = 1;
       ctx.stroke();
       ctx.restore();
+    }
+
+    // 4. Selection Box (when object selected with move tool)
+    const currentSelectedId = selectedStrokeIdRef.current;
+    const currentStrokes = strokesRef.current;
+    if (currentTool === TOOLS.SELECT && currentSelectedId) {
+      const selectedStroke = currentStrokes.find(
+        (s) => s.id === currentSelectedId,
+      );
+      if (selectedStroke && selectedStroke.points.length > 0) {
+        const bbox = getBoundingBox(selectedStroke.points, 8);
+        const handles = getHandlePositions(bbox);
+
+        ctx.save();
+
+        // Dashed border
+        ctx.strokeStyle = "#FF1493";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        const w = bbox.maxX - bbox.minX;
+        const h = bbox.maxY - bbox.minY;
+        ctx.strokeRect(bbox.minX, bbox.minY, w, h);
+        ctx.setLineDash([]);
+
+        // Draw handles
+        const HANDLE_RENDER_SIZE = 5;
+        handles.forEach((handle) => {
+          ctx.beginPath();
+          const isCorner = ["nw", "ne", "se", "sw"].includes(handle.position);
+
+          if (isCorner) {
+            // Corner handles: filled blue squares
+            ctx.fillStyle = "#FF1493";
+            ctx.fillRect(
+              handle.x - HANDLE_RENDER_SIZE,
+              handle.y - HANDLE_RENDER_SIZE,
+              HANDLE_RENDER_SIZE * 2,
+              HANDLE_RENDER_SIZE * 2,
+            );
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(
+              handle.x - HANDLE_RENDER_SIZE,
+              handle.y - HANDLE_RENDER_SIZE,
+              HANDLE_RENDER_SIZE * 2,
+              HANDLE_RENDER_SIZE * 2,
+            );
+          } else {
+            // Edge handles: white circles with blue border
+            ctx.arc(handle.x, handle.y, HANDLE_RENDER_SIZE, 0, Math.PI * 2);
+            ctx.fillStyle = "white";
+            ctx.fill();
+            ctx.strokeStyle = "#FF1493";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
+        });
+
+        ctx.restore();
+      }
     }
 
     // Peer Cursors

@@ -39,3 +39,12 @@ export type HistoryAction =
   | { type: "ADD"; stroke: Stroke }
   | { type: "UPDATE"; original: Stroke; new: Stroke }
   | { type: "DELETE"; stroke: Stroke };
+
+export interface BoundingBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+export type HandlePosition = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";

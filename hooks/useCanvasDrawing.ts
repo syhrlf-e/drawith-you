@@ -1,6 +1,21 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Point, Stroke, Tool, HistoryAction } from "@/lib/types";
-import { getCoordinates, throttle } from "@/lib/canvas-utils";
+import {
+  Point,
+  Stroke,
+  Tool,
+  HistoryAction,
+  BoundingBox,
+  HandlePosition,
+} from "@/lib/types";
+import {
+  getCoordinates,
+  throttle,
+  getBoundingBox,
+  hitTestHandle,
+  computeNewBbox,
+  transformStrokePoints,
+  getHandleCursor,
+} from "@/lib/canvas-utils";
 
 interface UseCanvasDrawingProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -78,6 +93,16 @@ export const useCanvasDrawing = ({
   const isDraggingStrokeRef = useRef(isDraggingStroke);
   const originalStrokeRef = useRef<Stroke | null>(null); // Track original state for Undo
 
+  // -- Scale/Resize State --
+  const [isScaling, setIsScaling] = useState(false);
+  const isScalingRef = useRef(false);
+  const activeHandleRef = useRef<HandlePosition | null>(null);
+  const originalBboxRef = useRef<BoundingBox | null>(null);
+
+  useEffect(() => {
+    isScalingRef.current = isScaling;
+  }, [isScaling]);
+
   useEffect(() => {
     isDraggingStrokeRef.current = isDraggingStroke;
   }, [isDraggingStroke]);
@@ -111,14 +136,35 @@ export const useCanvasDrawing = ({
       if (!currentTool) return;
 
       if (currentTool === "select") {
+        // 1. Check if clicking on a handle of already-selected stroke
+        if (selectedStrokeId) {
+          const selectedStroke = strokesRef.current.find(
+            (st) => st.id === selectedStrokeId,
+          );
+          if (selectedStroke && selectedStroke.points.length > 0) {
+            const bbox = getBoundingBox(selectedStroke.points, 8);
+            const handle = hitTestHandle(point.x, point.y, bbox);
+            if (handle) {
+              // Start scaling
+              setIsScaling(true);
+              activeHandleRef.current = handle;
+              originalBboxRef.current = bbox;
+              originalStrokeRef.current = parseStroke(selectedStroke);
+              document.body.style.cursor = getHandleCursor(handle);
+              return;
+            }
+          }
+        }
+
+        // 2. Check if clicking on a stroke body
         const hitId = hitTest(point.x, point.y);
         if (hitId) {
           if (onSelectStroke) onSelectStroke(hitId);
-          setIsDraggingStroke(true); // Triggers re-render to set cursor style
+          setIsDraggingStroke(true);
 
           const s = strokesRef.current.find((st) => st.id === hitId);
           if (s && s.points[0]) {
-            originalStrokeRef.current = parseStroke(s); // Deep copy original state
+            originalStrokeRef.current = parseStroke(s);
             setDragOffset({
               x: point.x - s.points[0].x,
               y: point.y - s.points[0].y,
@@ -187,6 +233,31 @@ export const useCanvasDrawing = ({
       const tool = toolRef.current;
       const isDragging = isDraggingStrokeRef.current;
 
+      // Handle scaling drag
+      if (tool === "select" && isScalingRef.current && selectedStrokeId) {
+        const handle = activeHandleRef.current;
+        const origBbox = originalBboxRef.current;
+        const origStroke = originalStrokeRef.current;
+        if (!handle || !origBbox || !origStroke) return;
+
+        const newBbox = computeNewBbox(origBbox, handle, point.x, point.y);
+        const newPoints = transformStrokePoints(
+          origStroke.points,
+          origBbox,
+          newBbox,
+        );
+
+        setStrokes((prev) =>
+          prev.map((st) =>
+            st.id === selectedStrokeId ? { ...st, points: newPoints } : st,
+          ),
+        );
+
+        throttledFirebaseSyncRef.current(selectedStrokeId, newPoints);
+        return;
+      }
+
+      // Handle move drag
       if (tool === "select" && isDragging && selectedStrokeId) {
         const s = strokesRef.current.find((st) => st.id === selectedStrokeId);
         if (!s) return;
@@ -201,24 +272,12 @@ export const useCanvasDrawing = ({
 
         const newPoints = s.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
 
-        // CRITICAL OPTIMIZATION:
-        // Do NOT set state here. Modifying state triggers React render cycle -> Diffing -> Commit.
-        // Instead, we mutate the strokesRef.current temporarily for visual feedback if we had a loop,
-        // OR we just directly call setStrokes but purely without any other overhead.
-        // But wait, setStrokes IS state update.
-        // To truly fix "lag", we should use requestAnimationFrame to batch these.
-
-        // Let's try direct state update but WITHOUT the throttle overhead first if 60fps is the goal
-        // The previous implementation used `throttle(..., 16)`. React 18+ automatic batching might be fighting with throttle.
-        // Let's try setting state DIRECTLY (it is async) but let React handle the batching.
-
         setStrokes((prev) =>
           prev.map((st) =>
             st.id === selectedStrokeId ? { ...st, points: newPoints } : st,
           ),
         );
 
-        // Sync to network (throttled)
         throttledFirebaseSyncRef.current(selectedStrokeId, newPoints);
         return;
       }
@@ -260,17 +319,37 @@ export const useCanvasDrawing = ({
   const stopDrawing = useCallback(() => {
     if (onStrokeInProgress) onStrokeInProgress(null);
 
-    // If dragging, just stop the flag. State is already updated live.
+    // If scaling, stop and push history
+    if (toolRef.current === "select" && isScalingRef.current) {
+      if (selectedStrokeId && originalStrokeRef.current && onHistoryAction) {
+        const finalStroke = strokesRef.current.find(
+          (s) => s.id === selectedStrokeId,
+        );
+        if (finalStroke) {
+          onHistoryAction({
+            type: "UPDATE",
+            original: originalStrokeRef.current,
+            new: parseStroke(finalStroke),
+          });
+        }
+      }
+      setIsScaling(false);
+      activeHandleRef.current = null;
+      originalBboxRef.current = null;
+      originalStrokeRef.current = null;
+      document.body.style.cursor = "";
+      return;
+    }
+
+    // If dragging (move), just stop the flag. State is already updated live.
     if (toolRef.current === "select" && isDraggingStrokeRef.current) {
       if (selectedStrokeId && originalStrokeRef.current && onHistoryAction) {
-        // Find the final state of the stroke
         const finalStroke = strokesRef.current.find(
           (s) => s.id === selectedStrokeId,
         );
 
         const originalStroke = originalStrokeRef.current;
 
-        // Check if actually changed
         if (
           finalStroke &&
           originalStroke &&
@@ -313,6 +392,8 @@ export const useCanvasDrawing = ({
 
   return {
     isDrawing,
+    isDraggingStroke,
+    isScaling,
     currentPoints,
     currentPointsRef, // Export Ref
     startDrawing,
